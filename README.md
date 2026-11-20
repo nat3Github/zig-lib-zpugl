@@ -1,9 +1,6 @@
 # zpugl
 
 Zig port of [pugl](https://gitlab.com/lv2/pugl) — a minimal cross-platform windowing library for audio plugins and standalone applications.
-
-## What it does
-
 zpugl creates native OS windows and delivers input events to a callback. You get a window, a graphics context, and a stream of events.
 
 Intended for:
@@ -11,8 +8,6 @@ Intended for:
 - Audio plugin GUIs (VST3, CLAP, AU) that need to embed into a host window
 - Standalone plugin hosts that need to hand a window handle to a plugin
 - Lightweight applications that want direct control over rendering
-
-## Core concepts
 
 ### World
 
