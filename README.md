@@ -89,22 +89,6 @@ plugin.set_parent(native); // CLAP: clap_window_t.ptr, VST3: IPlugView::attached
 
 The plugin creates its own child window inside yours. zpugl's event loop (`world.update`) keeps your window processing messages, which the OS propagates to the plugin's child window automatically.
 
-## Graphics backends
-
-### `.gl` — OpenGL
-
-Creates a platform GL context (NSOpenGLContext / WGL / GLX). The context is made current automatically around each `.expose` event. Call `glDraw*` directly in the expose handler.
-
-Configure the context before `realize`:
-
-```zig
-_ = view.setHint(.context_version_major, 3);
-_ = view.setHint(.context_version_minor, 3);
-_ = view.setHint(.context_profile, @intFromEnum(zpugl.ViewHintValue.opengl_core_profile));
-_ = view.setHint(.double_buffer, @intFromEnum(zpugl.ViewHintValue.true));
-```
-
-
 ## Platform notes
 
 | Platform | Windowing          | Window type        | GL              |
