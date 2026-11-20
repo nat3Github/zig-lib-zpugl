@@ -51,12 +51,12 @@ pub extern fn glClear(mask: GLbitfield) callconv(cc) void;
 pub extern fn glEnable(cap: GLenum) callconv(cc) void;
 pub extern fn glDisable(cap: GLenum) callconv(cc) void;
 pub extern fn glBlendFunc(sfactor: GLenum, dfactor: GLenum) callconv(cc) void;
-pub extern fn glGetIntegerv(pname: GLenum, data: [*]GLint) callconv(cc) void;
+pub extern fn glGetIntegerv(pname: GLenum, data: *GLint) callconv(cc) void;
 pub extern fn glDrawElements(mode: GLenum, count: GLsizei, @"type": GLenum, indices: ?*const anyopaque) callconv(cc) void;
 pub extern fn glReadPixels(x: GLint, y: GLint, width: GLsizei, height: GLsizei, format: GLenum, @"type": GLenum, pixels: ?*anyopaque) callconv(cc) void;
 
-pub extern fn glGenTextures(n: GLsizei, textures: [*]GLuint) callconv(cc) void;
-pub extern fn glDeleteTextures(n: GLsizei, textures: [*]const GLuint) callconv(cc) void;
+pub extern fn glGenTextures(n: GLsizei, textures: *GLuint) callconv(cc) void;
+pub extern fn glDeleteTextures(n: GLsizei, textures: *const GLuint) callconv(cc) void;
 pub extern fn glBindTexture(target: GLenum, texture: GLuint) callconv(cc) void;
 pub extern fn glTexParameteri(target: GLenum, pname: GLenum, param: GLint) callconv(cc) void;
 pub extern fn glTexImage2D(target: GLenum, level: GLint, internalformat: GLint, width: GLsizei, height: GLsizei, border: GLint, format: GLenum, @"type": GLenum, pixels: ?*const anyopaque) callconv(cc) void;
@@ -66,13 +66,13 @@ pub extern fn glGetTexImage(target: GLenum, level: GLint, format: GLenum, @"type
 pub extern fn glCreateShader(@"type": GLenum) callconv(cc) GLuint;
 pub extern fn glShaderSource(shader: GLuint, count: GLsizei, string: [*]const ?[*]const u8, length: ?[*]const GLint) callconv(cc) void;
 pub extern fn glCompileShader(shader: GLuint) callconv(cc) void;
-pub extern fn glGetShaderiv(shader: GLuint, pname: GLenum, params: [*]GLint) callconv(cc) void;
+pub extern fn glGetShaderiv(shader: GLuint, pname: GLenum, params: *GLint) callconv(cc) void;
 pub extern fn glGetShaderInfoLog(shader: GLuint, buf_size: GLsizei, length: ?*GLsizei, info_log: [*]u8) callconv(cc) void;
 pub extern fn glDeleteShader(shader: GLuint) callconv(cc) void;
 pub extern fn glCreateProgram() callconv(cc) GLuint;
 pub extern fn glAttachShader(program: GLuint, shader: GLuint) callconv(cc) void;
 pub extern fn glLinkProgram(program: GLuint) callconv(cc) void;
-pub extern fn glGetProgramiv(program: GLuint, pname: GLenum, params: [*]GLint) callconv(cc) void;
+pub extern fn glGetProgramiv(program: GLuint, pname: GLenum, params: *GLint) callconv(cc) void;
 pub extern fn glGetProgramInfoLog(program: GLuint, buf_size: GLsizei, length: ?*GLsizei, info_log: [*]u8) callconv(cc) void;
 pub extern fn glUseProgram(program: GLuint) callconv(cc) void;
 pub extern fn glDeleteProgram(program: GLuint) callconv(cc) void;
@@ -80,17 +80,17 @@ pub extern fn glGetUniformLocation(program: GLuint, name: [*:0]const u8) callcon
 pub extern fn glUniform1i(location: GLint, v0: GLint) callconv(cc) void;
 pub extern fn glUniformMatrix4fv(location: GLint, count: GLsizei, transpose: GLboolean, value: [*]const GLfloat) callconv(cc) void;
 
-pub extern fn glGenVertexArrays(n: GLsizei, arrays: [*]GLuint) callconv(cc) void;
-pub extern fn glDeleteVertexArrays(n: GLsizei, arrays: [*]const GLuint) callconv(cc) void;
+pub extern fn glGenVertexArrays(n: GLsizei, arrays: *GLuint) callconv(cc) void;
+pub extern fn glDeleteVertexArrays(n: GLsizei, arrays: *const GLuint) callconv(cc) void;
 pub extern fn glBindVertexArray(array: GLuint) callconv(cc) void;
-pub extern fn glGenBuffers(n: GLsizei, buffers: [*]GLuint) callconv(cc) void;
-pub extern fn glDeleteBuffers(n: GLsizei, buffers: [*]const GLuint) callconv(cc) void;
+pub extern fn glGenBuffers(n: GLsizei, buffers: *GLuint) callconv(cc) void;
+pub extern fn glDeleteBuffers(n: GLsizei, buffers: *const GLuint) callconv(cc) void;
 pub extern fn glBindBuffer(target: GLenum, buffer: GLuint) callconv(cc) void;
 pub extern fn glBufferData(target: GLenum, size: GLsizeiptr, data: ?*const anyopaque, usage: GLenum) callconv(cc) void;
 pub extern fn glVertexAttribPointer(index: GLuint, size: GLint, @"type": GLenum, normalized: GLboolean, stride: GLsizei, pointer: ?*const anyopaque) callconv(cc) void;
 pub extern fn glEnableVertexAttribArray(index: GLuint) callconv(cc) void;
 
-pub extern fn glGenFramebuffers(n: GLsizei, framebuffers: [*]GLuint) callconv(cc) void;
-pub extern fn glDeleteFramebuffers(n: GLsizei, framebuffers: [*]const GLuint) callconv(cc) void;
+pub extern fn glGenFramebuffers(n: GLsizei, framebuffers: *GLuint) callconv(cc) void;
+pub extern fn glDeleteFramebuffers(n: GLsizei, framebuffers: *const GLuint) callconv(cc) void;
 pub extern fn glBindFramebuffer(target: GLenum, framebuffer: GLuint) callconv(cc) void;
 pub extern fn glFramebufferTexture2D(target: GLenum, attachment: GLenum, textarget: GLenum, texture: GLuint, level: GLint) callconv(cc) void;

@@ -113,9 +113,9 @@ pub const GLState = struct {
     pub fn init() !GLState {
         var self = GLState{};
         const vs = c.glCreateShader(c.GL_VERTEX_SHADER);
-        const vs_src_ptr: ?[*]const u8 = vertex_shader_src.ptr;
-        const vs_len: c_int = @intCast(vertex_shader_src.len);
-        c.glShaderSource(vs, 1, &vs_src_ptr, &vs_len);
+        const vs_src_ptrs = [_]?[*]const u8{vertex_shader_src.ptr};
+        const vs_lens = [_]c.GLint{@intCast(vertex_shader_src.len)};
+        c.glShaderSource(vs, 1, &vs_src_ptrs, &vs_lens);
         c.glCompileShader(vs);
 
         var success: c.GLint = 0;
@@ -128,9 +128,9 @@ pub const GLState = struct {
         }
 
         const fs = c.glCreateShader(c.GL_FRAGMENT_SHADER);
-        const fs_src_ptr: ?[*]const u8 = fragment_shader_src.ptr;
-        const fs_len: c_int = @intCast(fragment_shader_src.len);
-        c.glShaderSource(fs, 1, &fs_src_ptr, &fs_len);
+        const fs_src_ptrs = [_]?[*]const u8{fragment_shader_src.ptr};
+        const fs_lens = [_]c.GLint{@intCast(fragment_shader_src.len)};
+        c.glShaderSource(fs, 1, &fs_src_ptrs, &fs_lens);
         c.glCompileShader(fs);
 
         c.glGetShaderiv(fs, c.GL_COMPILE_STATUS, &success);
