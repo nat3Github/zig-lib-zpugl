@@ -104,17 +104,6 @@ _ = view.setHint(.context_profile, @intFromEnum(zpugl.ViewHintValue.opengl_core_
 _ = view.setHint(.double_buffer, @intFromEnum(zpugl.ViewHintValue.true));
 ```
 
-### `.stub` — no graphics context
-
-Creates a native window with no GL context, for
-
-- Hosting a plugin that provides its own rendering
-- Embedding a third-party UI framework (e.g. JUCE, iPlug2) that manages its own context
-- You only need the window handle, not rendering
-
-### `.metal` / `.vulkan`
-
-`view.getContext()` returns what you need to create your own device and swapchain: the `CAMetalLayer` for `.metal`, and for `.vulkan` the `CAMetalLayer` (macOS, MoltenVK), the `HWND` (Windows) or the X11 `Window` (Linux). Rendering is up to you.
 
 ## Platform notes
 
