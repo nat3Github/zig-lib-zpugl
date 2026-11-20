@@ -6,11 +6,23 @@ const use_metal = builtin.os.tag.isDarwin();
 const opengl = if (use_metal) struct {} else @import("opengl.zig");
 const c = if (use_metal) struct {} else opengl.c;
 const metal = if (use_metal) @import("metal.zig") else struct {};
+const vulkan = @import("vulkan.zig");
 
 const Core = @This();
 pub const kind: dvui.enums.Backend = .custom;
 
-pub const Renderer = if (use_metal) metal.Renderer else opengl.GLState;
+pub const Native = if (use_metal) metal.Renderer else opengl.GLState;
+pub const Renderer = union(enum) {
+    native: Native,
+    vulkan: *vulkan.Renderer,
+
+    fn deinit(self: *Renderer) void {
+        switch (self.*) {
+            .native => |*n| n.deinit(),
+            .vulkan => |r| r.deinit(),
+        }
+    }
+};
 
 const TextChunk = struct { bytes: [8]u8, len: usize, at: usize = 0 };
 const SentKey = struct { native: usize, num: u16 };
@@ -40,6 +52,7 @@ pub const Options = struct {
     headless: bool = false,
     parts: ?Parts = null,
     world_allocator: ?std.mem.Allocator = null,
+    vulkan: bool = !use_metal,
 };
 
 world: *zpugl.World,
@@ -103,20 +116,55 @@ pub fn create(allocator: std.mem.Allocator, opts: Options) !*Core {
     }
     const world = try zpugl.World.init(opts.world_allocator orelse allocator, if (opts.parent == null) .program else .module, .{});
     errdefer world.deinit();
-    const view = try zpugl.View.init(world, onEvent);
-    errdefer view.deinit();
-    self.* = .{ .world = world, .view = view, .gl = undefined, .natural = natural, .size = .{ .w = natural.w, .h = natural.h }, .allocator = allocator, .headless = opts.headless };
+    self.* = .{ .world = world, .view = undefined, .gl = undefined, .natural = natural, .size = .{ .w = natural.w, .h = natural.h }, .allocator = allocator, .headless = opts.headless };
 
+    if (opts.vulkan) vk: {
+        const inst = vulkan.Instance.init(world) catch {
+            std.log.info("zpugl: Vulkan unavailable, using the native renderer", .{});
+            break :vk;
+        };
+        const view = self.openView(opts, .vulkan) catch |err| {
+            var i = inst;
+            i.deinit();
+            return err;
+        };
+        const r = vulkan.Renderer.init(allocator, inst, view) catch {
+            var i = inst;
+            i.deinit();
+            view.deinit();
+            std.log.info("zpugl: Vulkan setup failed, using the native renderer", .{});
+            break :vk;
+        };
+        self.gl = .{ .vulkan = r };
+        self.finishCreate();
+        return self;
+    }
+
+    const view = try self.openView(opts, if (use_metal) .metal else .gl);
+    errdefer view.deinit();
+    if (use_metal) {
+        self.gl = .{ .native = try metal.Renderer.init(allocator, view) };
+    } else {
+        const gb = zpugl.gl.get_backend();
+        _ = gb.enter(view, null);
+        defer _ = gb.leave(view, null);
+        self.gl = .{ .native = try opengl.GLState.init() };
+    }
+    self.finishCreate();
+    return self;
+}
+
+fn openView(self: *Core, opts: Options, backend_tag: zpugl.BackendTag) !*zpugl.View {
+    const view = try zpugl.View.init(self.world, onEvent);
+    errdefer view.deinit();
+    self.view = view;
     if (opts.parent) |p| view.setParent(@intFromPtr(p)) else {
         _ = view.setHint(.resizable, @backingInt(zpugl.ViewHintValue.true));
         _ = view.setViewString(.window_title, opts.title);
     }
     view.user_data = self;
-
-    if (use_metal) {
-        view.setBackend(.metal);
-    } else {
-        view.setBackend(.gl);
+    view.setBackend(backend_tag);
+    if (backend_tag == .gl) {
         _ = view.setHint(.context_version_major, 3);
         _ = view.setHint(.context_version_minor, 3);
         _ = view.setHint(.context_profile, @backingInt(zpugl.ViewHintValue.opengl_core_profile));
@@ -125,17 +173,11 @@ pub fn create(allocator: std.mem.Allocator, opts: Options) !*Core {
     _ = view.setSizeHint(.default_size, opts.width, opts.height);
     if (opts.position) |p| _ = view.setPositionHint(.default_position, p.x, p.y);
     try view.realize();
+    return view;
+}
 
-    if (use_metal) {
-        self.gl = try metal.Renderer.init(allocator, view);
-    } else {
-        const gb = zpugl.gl.get_backend();
-        _ = gb.enter(view, null);
-        defer _ = gb.leave(view, null);
-        self.gl = try opengl.GLState.init();
-    }
-    self.finishCreate();
-    return self;
+fn isGl(self: *const Core) bool {
+    return self.view.graphics_backend == .gl;
 }
 
 fn finishCreate(self: *Core) void {
@@ -154,21 +196,21 @@ pub fn openWindow(self: *Core, impl: *dvui.backend) !void {
 }
 
 pub fn deinit(self: *Core) void {
-    if (!use_metal) _ = zpugl.gl.get_backend().enter(self.view, null);
+    const gl_ctx = self.isGl();
+    if (gl_ctx) _ = zpugl.gl.get_backend().enter(self.view, null);
     self.deinitState();
-    var parts: Parts = .{ .world = self.world, .view = self.view, .gl = self.gl };
-    parts.gl.deinit();
-    if (!use_metal) _ = zpugl.gl.get_backend().leave(self.view, null);
-    parts.view.deinit();
-    parts.world.deinit();
+    self.gl.deinit();
+    if (gl_ctx) _ = zpugl.gl.get_backend().leave(self.view, null);
+    self.view.deinit();
+    self.world.deinit();
     self.allocator.destroy(self);
 }
 
 pub fn release(self: *Core) Parts {
-    std.debug.assert(use_metal);
+    std.debug.assert(use_metal and self.gl == .native);
     self.deinitState();
-    if (self.gl.cmd != null) self.gl.end();
-    std.debug.assert(self.gl.target == null);
+    if (self.gl.native.cmd != null) self.gl.native.end();
+    std.debug.assert(self.gl.native.target == null);
     if (self.textInputActive()) _ = self.view.stopTextInput();
     self.view.user_data = null;
     const parts: Parts = .{ .world = self.world, .view = self.view, .gl = self.gl };
@@ -281,7 +323,7 @@ fn onEvent(view: *zpugl.View, event: *const zpugl.Event) zpugl.Status {
                 self.scale = s;
                 self.size = self.natural.scale(s, dvui.Size.Physical);
             }
-            if (!use_metal) zpugl.gl.resize(view);
+            if (view.graphics_backend == .gl) zpugl.gl.resize(view);
             if (self.repaint != null and !self.in_frame) {
                 self.in_expose = true;
                 defer self.in_expose = false;
@@ -550,8 +592,14 @@ pub fn pollEvents(self: *Core) void {
 pub fn begin(self: *Core, arena: std.mem.Allocator) !void {
     self.arena = arena;
     if (!self.in_expose and !self.headless) _ = self.world.update(0);
+    const w: u32 = if (self.headless) 0 else @intFromFloat(self.size.w);
+    const h: u32 = if (self.headless) 0 else @intFromFloat(self.size.h);
+    if (self.gl == .vulkan) {
+        try self.gl.vulkan.begin(w, h);
+        return self.feedEvents();
+    }
     if (use_metal) {
-        if (self.headless) self.gl.begin(0, 0) else self.gl.begin(@intFromFloat(self.size.w), @intFromFloat(self.size.h));
+        self.gl.native.begin(w, h);
         return self.feedEvents();
     }
     const gb = zpugl.gl.get_backend();
@@ -633,7 +681,8 @@ pub fn end(self: *Core) !void {
         self.passKey(k.native, !used);
     }
     self.key_sent.clearRetainingCapacity();
-    if (use_metal) return self.gl.end();
+    if (self.gl == .vulkan) return self.gl.vulkan.end();
+    if (use_metal) return self.gl.native.end();
     if (self.in_expose) return;
     const expose = zpugl.ExposeEvent{ .x = 0, .y = 0, .width = @intFromFloat(self.size.w), .height = @intFromFloat(self.size.h) };
     _ = zpugl.gl.get_backend().leave(self.view, &expose);
@@ -652,29 +701,41 @@ pub fn contentScale(_: *Core) f32 {
 }
 
 pub fn drawClippedTriangles(self: *Core, texture: ?dvui.Texture, vtx: []const dvui.Vertex, idx: []const u16, clipr: ?dvui.Rect.Physical) !void {
-    try self.gl.drawClippedTriangles(@intFromFloat(self.size.w), @intFromFloat(self.size.h), texture, vtx, idx, clipr);
+    switch (self.gl) {
+        .vulkan => |r| try r.drawClippedTriangles(texture, vtx, idx, clipr),
+        .native => |*n| try n.drawClippedTriangles(@intFromFloat(self.size.w), @intFromFloat(self.size.h), texture, vtx, idx, clipr),
+    }
 }
 
 pub fn textureCreate(self: *Core, pixels: [*]const u8, options: dvui.Texture.CreateOptions) !dvui.Texture {
-    if (use_metal) return self.gl.textureCreate(pixels, options);
+    if (self.gl == .vulkan) return self.gl.vulkan.textureCreate(pixels, options);
+    if (use_metal) return self.gl.native.textureCreate(pixels, options);
     return opengl.createTexture(pixels, options);
 }
 
 pub fn textureDestroy(self: *Core, texture: dvui.Texture) void {
-    if (use_metal) return self.gl.textureDestroy(texture);
+    if (self.gl == .vulkan) return self.gl.vulkan.textureDestroy(texture);
+    if (use_metal) return self.gl.native.textureDestroy(texture);
     const tex: c.GLuint = @intCast(@intFromPtr(texture.ptr));
     c.glDeleteTextures(1, &tex);
 }
 
 pub fn textureUpdate(self: *Core, texture: dvui.Texture, pixels: [*]const u8) !void {
-    if (use_metal) return self.gl.textureUpdate(texture, pixels);
+    if (self.gl == .vulkan) return self.gl.vulkan.textureUpdate(texture, pixels);
+    if (use_metal) return self.gl.native.textureUpdate(texture, pixels);
     const tex: c.GLuint = @intCast(@intFromPtr(texture.ptr));
     c.glBindTexture(c.GL_TEXTURE_2D, tex);
     c.glTexSubImage2D(c.GL_TEXTURE_2D, 0, 0, 0, @intCast(texture.width), @intCast(texture.height), c.GL_RGBA, c.GL_UNSIGNED_BYTE, pixels);
 }
 
+pub fn textureUpdateSubRect(self: *Core, texture: dvui.Texture, pixels: [*]const u8, x: u32, y: u32, w: u32, h: u32) !void {
+    if (self.gl == .vulkan) return self.gl.vulkan.textureUpdateSubRect(texture, pixels, x, y, w, h);
+    return error.NotImplemented;
+}
+
 pub fn textureCreateTarget(self: *Core, options: dvui.Texture.CreateOptions) !dvui.TextureTarget {
-    if (use_metal) return self.gl.targetCreate(options);
+    if (self.gl == .vulkan) return self.gl.vulkan.targetCreate(options);
+    if (use_metal) return self.gl.native.targetCreate(options);
     return opengl.createTarget(options);
 }
 
@@ -683,7 +744,8 @@ pub fn textureDestroyTarget(self: *Core, texture: dvui.Texture.Target) void {
 }
 
 pub fn textureReadTarget(self: *Core, texture: dvui.TextureTarget, pixels_out: [*]u8) !void {
-    if (use_metal) return self.gl.targetRead(texture, pixels_out);
+    if (self.gl == .vulkan) return self.gl.vulkan.targetRead(texture, pixels_out);
+    if (use_metal) return self.gl.native.targetRead(texture, pixels_out);
     opengl.readTarget(texture, pixels_out);
 }
 
@@ -696,12 +758,16 @@ pub fn textureFromTargetTemp(_: *Core, texture: dvui.TextureTarget) !dvui.Textur
 }
 
 pub fn textureClearTarget(self: *Core, texture: dvui.TextureTarget) void {
-    if (use_metal) return self.gl.targetClear(texture);
+    if (self.gl == .vulkan) return self.gl.vulkan.targetClear(texture);
+    if (use_metal) return self.gl.native.targetClear(texture);
     opengl.clearTarget(texture);
 }
 
 pub fn renderTarget(self: *Core, texture: ?dvui.TextureTarget) !void {
-    self.gl.renderTarget(texture);
+    switch (self.gl) {
+        .vulkan => |r| r.renderTarget(texture),
+        .native => |*n| n.renderTarget(texture),
+    }
 }
 
 pub fn clipboardPasteRequest(self: *Core) !void {
