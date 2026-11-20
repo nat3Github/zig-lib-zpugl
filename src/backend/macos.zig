@@ -178,6 +178,7 @@ pub extern fn zpugl_mac_create_view(
     dark_frame: bool,
     view_type: u32,
     has_pos: bool,
+    metal: bool,
 ) usize;
 
 pub extern fn zpugl_mac_destroy_view(native: usize) void;
@@ -235,7 +236,7 @@ pub fn createView(view: *root.View) root.Status {
     const ry: f64 = @floatFromInt(if (has_pos) pos.y else 0);
     const rw: f64 = @floatFromInt(if (size.width == 0) 800 else size.width);
     const rh: f64 = @floatFromInt(if (size.height == 0) 600 else size.height);
-    const native = zpugl_mac_create_view(view, view.parent, rx, ry, rw, rh, resizable, dark_frame, view_type, has_pos);
+    const native = zpugl_mac_create_view(view, view.parent, rx, ry, rw, rh, resizable, dark_frame, view_type, has_pos, view.graphics_backend == .metal or view.graphics_backend == .vulkan);
     if (native == 0) return .realize_failed;
     view.handle = @ptrFromInt(native);
     view.visible = view.parent != 0;

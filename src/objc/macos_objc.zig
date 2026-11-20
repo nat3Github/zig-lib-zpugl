@@ -26,6 +26,7 @@ const NSWindowStyleMaskDocModalWindow: NSUInteger = 1 << 6;
 const NSWindowStyleMaskFullScreen: NSUInteger = 1 << 14;
 
 const NSBackingStoreBuffered: NSUInteger = 2;
+const NSViewLayerContentsRedrawOnSetNeedsDisplay: NSInteger = 1;
 
 const NSEventMaskAny: u64 = ~@as(u64, 0);
 const NSEventTypeApplicationDefined: NSUInteger = 15;
@@ -88,6 +89,7 @@ var class_name_buf_view: [64]u8 = undefined;
 var class_name_buf_timer: [64]u8 = undefined;
 var class_name_buf_app_delegate: [64]u8 = undefined;
 var class_name_buf_text_proxy: [64]u8 = undefined;
+var class_name_buf_metal_view: [64]u8 = undefined;
 
 const Dl_info = extern struct {
     dli_fname: ?[*:0]const u8,
@@ -119,6 +121,9 @@ fn timerClassName() [:0]const u8 {
 fn appDelegateClassName() [:0]const u8 {
     return std.fmt.bufPrintSentinel(&class_name_buf_app_delegate, "ZpuglAppDelegate_{x}", .{dylibSuffix()}, 0) catch unreachable;
 }
+fn metalViewClassName() [:0]const u8 {
+    return std.fmt.bufPrintSentinel(&class_name_buf_metal_view, "ZpuglMetalView_{x}", .{dylibSuffix()}, 0) catch unreachable;
+}
 fn textProxyClassName() [:0]const u8 {
     return std.fmt.bufPrintSentinel(&class_name_buf_text_proxy, "ZpuglTextProxy_{x}", .{dylibSuffix()}, 0) catch unreachable;
 }
@@ -126,6 +131,7 @@ fn textProxyClassName() [:0]const u8 {
 // --- Class registration ---
 
 var view_class: ?objc.Class = null;
+var metal_view_class: ?objc.Class = null;
 var timer_class: ?objc.Class = null;
 var app_delegate_class: ?objc.Class = null;
 var text_proxy_class: ?objc.Class = null;
@@ -165,16 +171,19 @@ inline fn setIvarPtr(self: c.id, ptr: ?*anyopaque) void {
 inline fn timerIvarSet(self: c.id, view_ptr: ?*anyopaque, id: usize) void {
     const v_ivar = c.object_getInstanceVariable(self, "zigView", null);
     c.object_setIvar(self, v_ivar, @ptrCast(@alignCast(view_ptr)));
-    const i_ivar = c.object_getInstanceVariable(self, "timerId", null);
-    c.object_setIvar(self, i_ivar, @ptrFromInt(id));
+    timerIdPtr(self).* = id;
+}
+
+inline fn timerIdPtr(self: c.id) *usize {
+    const ivar = c.class_getInstanceVariable(c.object_getClass(self), "timerId");
+    return @ptrFromInt(@intFromPtr(self) + @as(usize, @intCast(c.ivar_getOffset(ivar))));
 }
 
 inline fn timerIvarGet(self: c.id) struct { view: ?*anyopaque, id: usize } {
     const v_ivar = c.object_getInstanceVariable(self, "zigView", null);
-    const i_ivar = c.object_getInstanceVariable(self, "timerId", null);
     return .{
         .view = @ptrCast(c.object_getIvar(self, v_ivar)),
-        .id = @intFromPtr(c.object_getIvar(self, i_ivar)),
+        .id = timerIdPtr(self).*,
     };
 }
 
@@ -191,33 +200,21 @@ fn impWindowShouldClose(self: c.id, _: c.SEL, _: c.id) callconv(.c) bool {
     return false;
 }
 
-fn impDrawRect(self: c.id, _: c.SEL, dirty: NSRect) callconv(.c) void {
-    if (ivarPtr(self)) |p| {
-        zpugl_on_expose(
-            p,
-            @intFromFloat(dirty.origin.x),
-            @intFromFloat(dirty.origin.y),
-            @intFromFloat(dirty.size.width),
-            @intFromFloat(dirty.size.height),
-        );
-    }
+fn exposeIfVisible(self: c.id, rect: NSRect) void {
+    const p = ivarPtr(self) orelse return;
+    const win = objFromId(self).msgSend(c.id, "window", .{}) orelse return;
+    if (!objFromId(win).msgSend(bool, "isVisible", .{})) return;
+    zpugl_on_expose(
+        p,
+        @intFromFloat(rect.origin.x),
+        @intFromFloat(rect.origin.y),
+        @intFromFloat(rect.size.width),
+        @intFromFloat(rect.size.height),
+    );
 }
 
-// Layer-hosted views (Metal/Vulkan backends) bypass drawRect: entirely.
-// CALayerDelegate's displayLayer: fires when the layer is invalidated,
-// giving us the same expose-trigger semantics.
-fn impDisplayLayer(self: c.id, _: c.SEL, _: c.id) callconv(.c) void {
-    if (ivarPtr(self)) |p| {
-        const obj = objFromId(self);
-        const bounds = obj.msgSend(NSRect, "bounds", .{});
-        zpugl_on_expose(
-            p,
-            @intFromFloat(bounds.origin.x),
-            @intFromFloat(bounds.origin.y),
-            @intFromFloat(bounds.size.width),
-            @intFromFloat(bounds.size.height),
-        );
-    }
+fn impDrawRect(self: c.id, _: c.SEL, dirty: NSRect) callconv(.c) void {
+    exposeIfVisible(self, dirty);
 }
 
 fn impSetFrameSize(self: c.id, _: c.SEL, new_size: NSSize) callconv(.c) void {
@@ -773,7 +770,6 @@ fn ensureViewClass() objc.Class {
     std.debug.assert(cls.addMethod("isFlipped", impIsFlipped));
     std.debug.assert(cls.addMethod("windowShouldClose:", impWindowShouldClose));
     std.debug.assert(cls.addMethod("drawRect:", impDrawRect));
-    std.debug.assert(cls.addMethod("displayLayer:", impDisplayLayer));
     std.debug.assert(cls.addMethod("setFrameSize:", impSetFrameSize));
     std.debug.assert(cls.addMethod("mouseDown:", impMouseDown));
     std.debug.assert(cls.addMethod("mouseUp:", impMouseUp));
@@ -819,6 +815,41 @@ fn ensureViewClass() objc.Class {
     std.debug.assert(cls.addMethod("selectAll:", impSelectAll));
     objc.registerClassPair(cls);
     view_class = cls;
+    return cls;
+}
+
+fn impMakeBackingLayer(self: c.id, _: c.SEL) callconv(.c) c.id {
+    const layer = nsClass("CAMetalLayer").msgSend(objc.Object, "layer", .{});
+    layer.msgSend(void, "setDelegate:", .{self});
+    return layer.value;
+}
+
+fn displayRequestedPtr(self: c.id) *usize {
+    const ivar = c.class_getInstanceVariable(c.object_getClass(self), "displayRequested");
+    return @ptrFromInt(@intFromPtr(self) + @as(usize, @intCast(c.ivar_getOffset(ivar))));
+}
+
+fn impMetalSetNeedsDisplay(self: c.id, _: c.SEL, flag: bool) callconv(.c) void {
+    if (flag) displayRequestedPtr(self).* = 1;
+    objFromId(self).msgSendSuper(ensureViewClass(), void, "setNeedsDisplay:", .{flag});
+}
+
+fn impMetalDisplayLayer(self: c.id, _: c.SEL, _: c.id) callconv(.c) void {
+    const requested = displayRequestedPtr(self);
+    if (requested.* == 0) return;
+    requested.* = 0;
+    exposeIfVisible(self, objFromId(self).msgSend(NSRect, "bounds", .{}));
+}
+
+fn ensureMetalViewClass() objc.Class {
+    if (metal_view_class) |cls| return cls;
+    const cls = objc.allocateClassPair(ensureViewClass(), metalViewClassName()).?;
+    _ = cls.addIvar("displayRequested");
+    std.debug.assert(cls.addMethod("makeBackingLayer", impMakeBackingLayer));
+    std.debug.assert(cls.addMethod("setNeedsDisplay:", impMetalSetNeedsDisplay));
+    std.debug.assert(cls.addMethod("displayLayer:", impMetalDisplayLayer));
+    objc.registerClassPair(cls);
+    metal_view_class = cls;
     return cls;
 }
 
@@ -923,6 +954,7 @@ export fn zpugl_mac_create_view(
     dark_frame: bool,
     view_type: u32,
     has_pos: bool,
+    metal: bool,
 ) usize {
     if (!isMainThread()) return 0;
 
@@ -934,13 +966,18 @@ export fn zpugl_mac_create_view(
         app.msgSend(void, "finishLaunching", .{});
     }
 
-    const cls = ensureViewClass();
+    const cls = if (metal) ensureMetalViewClass() else ensureViewClass();
     const view = cls.msgSend(objc.Object, "alloc", .{})
         .msgSend(objc.Object, "initWithFrame:", .{NSRect{
         .origin = .{ .x = x, .y = y },
         .size = .{ .width = w, .height = h },
     }});
     setIvarPtr(view.value, view_ptr);
+    if (metal) {
+        view.msgSend(void, "setWantsLayer:", .{true});
+        view.msgSend(void, "setLayerContentsRedrawPolicy:", .{NSViewLayerContentsRedrawOnSetNeedsDisplay});
+        view.msgSend(void, "setNeedsDisplay:", .{true});
+    }
 
     if (parent_native != 0) {
         const parent: objc.Object = .{ .value = @ptrFromInt(parent_native) };
@@ -986,6 +1023,7 @@ export fn zpugl_mac_create_view(
 export fn zpugl_mac_destroy_view(native: usize) void {
     if (native == 0) return;
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
+    if (ivarPtr(view.value)) |p| stopViewTimers(@intFromPtr(p));
     const win_id = view.msgSend(c.id, "window", .{});
     var owned_window: ?objc.Object = null;
     if (win_id) |w| {
@@ -1168,23 +1206,7 @@ export fn zpugl_mac_set_cursor(_: usize, cursor_type: u32) void {
 
 export fn zpugl_mac_obscure_view(native: usize) void {
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
-    const wants_layer = view.msgSend(bool, "wantsLayer", .{});
-    if (wants_layer) {
-        // Layer-hosted (Metal/Vulkan): drawRect: is never called; fire
-        // expose directly so the host can drive its own drawable cycle.
-        if (ivarPtr(view.value)) |p| {
-            const bounds = view.msgSend(NSRect, "bounds", .{});
-            zpugl_on_expose(
-                p,
-                @intFromFloat(bounds.origin.x),
-                @intFromFloat(bounds.origin.y),
-                @intFromFloat(bounds.size.width),
-                @intFromFloat(bounds.size.height),
-            );
-        }
-    } else {
-        view.msgSend(void, "setNeedsDisplay:", .{true});
-    }
+    view.msgSend(void, "setNeedsDisplay:", .{true});
 }
 
 export fn zpugl_mac_obscure_region(native: usize, x: f64, y: f64, w: f64, h: f64) void {
@@ -1207,6 +1229,8 @@ export fn zpugl_mac_set_transient_parent(child_native: usize, parent_native: usi
 }
 
 export fn zpugl_mac_update(timeout: f64) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const NSDate = nsClass("NSDate");
     var until = if (timeout < 0)
         NSDate.msgSend(objc.Object, "distantFuture", .{})
@@ -1334,6 +1358,18 @@ export fn zpugl_mac_start_timer(zig_view: *anyopaque, timer_id: usize, freq: f64
     }
     timers.put(std.heap.c_allocator, key, t.value) catch return 1;
     return 0;
+}
+
+fn stopViewTimers(view: usize) void {
+    timers_mutex.lock();
+    defer timers_mutex.unlock();
+    var it = timers.iterator();
+    while (it.next()) |entry| {
+        if (entry.key_ptr.view != view) continue;
+        (objc.Object{ .value = entry.value_ptr.* }).msgSend(void, "invalidate", .{});
+        timers.removeByPtr(entry.key_ptr);
+        it = timers.iterator();
+    }
 }
 
 export fn zpugl_mac_stop_timer(zig_view: *anyopaque, timer_id: usize) u32 {
