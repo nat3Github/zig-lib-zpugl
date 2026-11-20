@@ -1,0 +1,96 @@
+const std = @import("std");
+const builtin = @import("builtin");
+
+const cc: std.builtin.CallingConvention = if (builtin.os.tag == .windows) .winapi else .c;
+
+pub const GLenum = c_uint;
+pub const GLuint = c_uint;
+pub const GLint = c_int;
+pub const GLsizei = c_int;
+pub const GLboolean = u8;
+pub const GLbitfield = c_uint;
+pub const GLfloat = f32;
+pub const GLsizeiptr = isize;
+
+pub const GL_FALSE = 0;
+pub const GL_TRUE = 1;
+pub const GL_ONE = 1;
+pub const GL_TRIANGLES = 0x0004;
+pub const GL_ONE_MINUS_SRC_ALPHA = 0x0303;
+pub const GL_BLEND = 0x0BE2;
+pub const GL_SCISSOR_TEST = 0x0C11;
+pub const GL_TEXTURE_2D = 0x0DE1;
+pub const GL_UNSIGNED_BYTE = 0x1401;
+pub const GL_UNSIGNED_SHORT = 0x1403;
+pub const GL_FLOAT = 0x1406;
+pub const GL_RGBA = 0x1908;
+pub const GL_NEAREST = 0x2600;
+pub const GL_LINEAR = 0x2601;
+pub const GL_TEXTURE_MAG_FILTER = 0x2800;
+pub const GL_TEXTURE_MIN_FILTER = 0x2801;
+pub const GL_TEXTURE_WRAP_S = 0x2802;
+pub const GL_TEXTURE_WRAP_T = 0x2803;
+pub const GL_REPEAT = 0x2901;
+pub const GL_COLOR_BUFFER_BIT = 0x4000;
+pub const GL_CLAMP_TO_EDGE = 0x812F;
+pub const GL_ARRAY_BUFFER = 0x8892;
+pub const GL_ELEMENT_ARRAY_BUFFER = 0x8893;
+pub const GL_STREAM_DRAW = 0x88E0;
+pub const GL_FRAGMENT_SHADER = 0x8B30;
+pub const GL_VERTEX_SHADER = 0x8B31;
+pub const GL_COMPILE_STATUS = 0x8B81;
+pub const GL_LINK_STATUS = 0x8B82;
+pub const GL_FRAMEBUFFER_BINDING = 0x8CA6;
+pub const GL_COLOR_ATTACHMENT0 = 0x8CE0;
+pub const GL_FRAMEBUFFER = 0x8D40;
+
+pub extern fn glViewport(x: GLint, y: GLint, width: GLsizei, height: GLsizei) callconv(cc) void;
+pub extern fn glScissor(x: GLint, y: GLint, width: GLsizei, height: GLsizei) callconv(cc) void;
+pub extern fn glClearColor(r: GLfloat, g: GLfloat, b: GLfloat, a: GLfloat) callconv(cc) void;
+pub extern fn glClear(mask: GLbitfield) callconv(cc) void;
+pub extern fn glEnable(cap: GLenum) callconv(cc) void;
+pub extern fn glDisable(cap: GLenum) callconv(cc) void;
+pub extern fn glBlendFunc(sfactor: GLenum, dfactor: GLenum) callconv(cc) void;
+pub extern fn glGetIntegerv(pname: GLenum, data: [*]GLint) callconv(cc) void;
+pub extern fn glDrawElements(mode: GLenum, count: GLsizei, @"type": GLenum, indices: ?*const anyopaque) callconv(cc) void;
+pub extern fn glReadPixels(x: GLint, y: GLint, width: GLsizei, height: GLsizei, format: GLenum, @"type": GLenum, pixels: ?*anyopaque) callconv(cc) void;
+
+pub extern fn glGenTextures(n: GLsizei, textures: [*]GLuint) callconv(cc) void;
+pub extern fn glDeleteTextures(n: GLsizei, textures: [*]const GLuint) callconv(cc) void;
+pub extern fn glBindTexture(target: GLenum, texture: GLuint) callconv(cc) void;
+pub extern fn glTexParameteri(target: GLenum, pname: GLenum, param: GLint) callconv(cc) void;
+pub extern fn glTexImage2D(target: GLenum, level: GLint, internalformat: GLint, width: GLsizei, height: GLsizei, border: GLint, format: GLenum, @"type": GLenum, pixels: ?*const anyopaque) callconv(cc) void;
+pub extern fn glTexSubImage2D(target: GLenum, level: GLint, xoffset: GLint, yoffset: GLint, width: GLsizei, height: GLsizei, format: GLenum, @"type": GLenum, pixels: ?*const anyopaque) callconv(cc) void;
+pub extern fn glGetTexImage(target: GLenum, level: GLint, format: GLenum, @"type": GLenum, pixels: ?*anyopaque) callconv(cc) void;
+
+pub extern fn glCreateShader(@"type": GLenum) callconv(cc) GLuint;
+pub extern fn glShaderSource(shader: GLuint, count: GLsizei, string: [*]const ?[*]const u8, length: ?[*]const GLint) callconv(cc) void;
+pub extern fn glCompileShader(shader: GLuint) callconv(cc) void;
+pub extern fn glGetShaderiv(shader: GLuint, pname: GLenum, params: [*]GLint) callconv(cc) void;
+pub extern fn glGetShaderInfoLog(shader: GLuint, buf_size: GLsizei, length: ?*GLsizei, info_log: [*]u8) callconv(cc) void;
+pub extern fn glDeleteShader(shader: GLuint) callconv(cc) void;
+pub extern fn glCreateProgram() callconv(cc) GLuint;
+pub extern fn glAttachShader(program: GLuint, shader: GLuint) callconv(cc) void;
+pub extern fn glLinkProgram(program: GLuint) callconv(cc) void;
+pub extern fn glGetProgramiv(program: GLuint, pname: GLenum, params: [*]GLint) callconv(cc) void;
+pub extern fn glGetProgramInfoLog(program: GLuint, buf_size: GLsizei, length: ?*GLsizei, info_log: [*]u8) callconv(cc) void;
+pub extern fn glUseProgram(program: GLuint) callconv(cc) void;
+pub extern fn glDeleteProgram(program: GLuint) callconv(cc) void;
+pub extern fn glGetUniformLocation(program: GLuint, name: [*:0]const u8) callconv(cc) GLint;
+pub extern fn glUniform1i(location: GLint, v0: GLint) callconv(cc) void;
+pub extern fn glUniformMatrix4fv(location: GLint, count: GLsizei, transpose: GLboolean, value: [*]const GLfloat) callconv(cc) void;
+
+pub extern fn glGenVertexArrays(n: GLsizei, arrays: [*]GLuint) callconv(cc) void;
+pub extern fn glDeleteVertexArrays(n: GLsizei, arrays: [*]const GLuint) callconv(cc) void;
+pub extern fn glBindVertexArray(array: GLuint) callconv(cc) void;
+pub extern fn glGenBuffers(n: GLsizei, buffers: [*]GLuint) callconv(cc) void;
+pub extern fn glDeleteBuffers(n: GLsizei, buffers: [*]const GLuint) callconv(cc) void;
+pub extern fn glBindBuffer(target: GLenum, buffer: GLuint) callconv(cc) void;
+pub extern fn glBufferData(target: GLenum, size: GLsizeiptr, data: ?*const anyopaque, usage: GLenum) callconv(cc) void;
+pub extern fn glVertexAttribPointer(index: GLuint, size: GLint, @"type": GLenum, normalized: GLboolean, stride: GLsizei, pointer: ?*const anyopaque) callconv(cc) void;
+pub extern fn glEnableVertexAttribArray(index: GLuint) callconv(cc) void;
+
+pub extern fn glGenFramebuffers(n: GLsizei, framebuffers: [*]GLuint) callconv(cc) void;
+pub extern fn glDeleteFramebuffers(n: GLsizei, framebuffers: [*]const GLuint) callconv(cc) void;
+pub extern fn glBindFramebuffer(target: GLenum, framebuffer: GLuint) callconv(cc) void;
+pub extern fn glFramebufferTexture2D(target: GLenum, attachment: GLenum, textarget: GLenum, texture: GLuint, level: GLint) callconv(cc) void;
