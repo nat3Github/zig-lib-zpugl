@@ -625,55 +625,7 @@ fn on_event(view: *zpugl.View, event: *const zpugl.Event) zpugl.Status {
 // ---------------------------------------------------------------------------
 const builtin = @import("builtin");
 
-// Cross-platform dynamic library loading.
-const dyn = if (builtin.os.tag == .windows) struct {
-    extern "kernel32" fn LoadLibraryA(name: [*:0]const u8) callconv(.winapi) ?*anyopaque;
-    extern "kernel32" fn GetProcAddress(h: ?*anyopaque, name: [*:0]const u8) callconv(.winapi) ?*anyopaque;
-    pub fn open(path: [*:0]const u8) ?*anyopaque {
-        return LoadLibraryA(path);
-    }
-    pub fn sym(h: ?*anyopaque, name: [*:0]const u8) ?*anyopaque {
-        return GetProcAddress(h, name);
-    }
-} else struct {
-    extern "c" fn dlopen(path: ?[*:0]const u8, mode: c_int) ?*anyopaque;
-    extern "c" fn dlsym(handle: ?*anyopaque, name: [*:0]const u8) ?*anyopaque;
-    const RTLD_NOW: c_int = 2;
-    pub fn open(path: [*:0]const u8) ?*anyopaque {
-        return dlopen(path, RTLD_NOW);
-    }
-    pub fn sym(h: ?*anyopaque, name: [*:0]const u8) ?*anyopaque {
-        return dlsym(h, name);
-    }
-};
-
-var g_vk_loader: ?zpugl.vulkan.VkLoader = null;
-
-fn try_load_vulkan_loader() bool {
-    const candidates: []const [*:0]const u8 = switch (builtin.os.tag) {
-        .macos => &.{
-            "libvulkan.1.dylib",
-            "libvulkan.dylib",
-            "libMoltenVK.dylib",
-            "/opt/homebrew/lib/libMoltenVK.dylib",
-            "/opt/homebrew/Cellar/molten-vk/1.4.1/lib/libMoltenVK.dylib",
-            "/usr/local/lib/libMoltenVK.dylib",
-        },
-        .windows => &.{"vulkan-1.dll"},
-        else => &.{ "libvulkan.so.1", "libvulkan.so" },
-    };
-    var handle: ?*anyopaque = null;
-    for (candidates) |path| {
-        handle = dyn.open(path);
-        if (handle != null) break;
-    }
-    const h = handle orelse return false;
-    const sym_ptr = dyn.sym(h, "vkGetInstanceProcAddr") orelse return false;
-    const loader: zpugl.vulkan.VkLoader = @ptrCast(@alignCast(sym_ptr));
-    g_vk_loader = loader;
-    zpugl.vulkan.setLoader(loader);
-    return true;
-}
+var g_vk_loader: ?zpugl.vulkan.PFN_vkGetInstanceProcAddr = null;
 
 // Minimal Vulkan instance bits for the smoke test. We don't need the full
 // API — only enough to create an instance with the platform surface
@@ -714,14 +666,7 @@ fn vk_create_instance() ?zpugl.vulkan.VkInstance {
     const create_sym = loader(null, "vkCreateInstance") orelse return null;
     const create_fn: PFN_vkCreateInstance = @ptrCast(@alignCast(create_sym));
 
-    const surface_ext: [*:0]const u8 = "VK_KHR_surface";
-    const platform_ext: [*:0]const u8 = switch (builtin.os.tag) {
-        .macos => "VK_EXT_metal_surface",
-        .windows => "VK_KHR_win32_surface",
-        else => "VK_KHR_xlib_surface",
-    };
-
-    var exts = [_][*:0]const u8{ surface_ext, platform_ext };
+    const exts = zpugl.vulkan.getInstanceExtensions();
 
     const app_info = VkApplicationInfo{
         .pApplicationName = "zpugl-triangle-smoke",
@@ -730,8 +675,8 @@ fn vk_create_instance() ?zpugl.vulkan.VkInstance {
 
     const ci = VkInstanceCreateInfo{
         .pApplicationInfo = &app_info,
-        .enabledExtensionCount = exts.len,
-        .ppEnabledExtensionNames = &exts,
+        .enabledExtensionCount = @intCast(exts.len),
+        .ppEnabledExtensionNames = exts.ptr,
     };
 
     var inst: ?zpugl.vulkan.VkInstance = null;
@@ -936,10 +881,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         g_backend_tag = .vulkan;
         // Try to load MoltenVK / vulkan loader so the surface code can resolve
         // vkCreate*Surface*. If unavailable, gracefully skip in smoke mode.
-        if (!try_load_vulkan_loader()) {
-            std.debug.print("vulkan: loader not found, skipping\n", .{});
-            std.process.exit(0);
-        }
+
     } else {
         std.debug.print("unknown backend '{s}' — valid: gl|metal|vulkan|stub\n", .{args.backend});
         std.process.exit(2);
@@ -951,6 +893,14 @@ pub fn main(init: std.process.Init.Minimal) !void {
     // Init world
     const world = try zpugl.World.init(allocator, .program, .{});
     g_world = world;
+
+    if (g_backend_tag == .vulkan) {
+        const loader = zpugl.vulkan.Loader.init(world, null) catch {
+            std.debug.print("vulkan: loader not found, skipping\n", .{});
+            std.process.exit(0);
+        };
+        g_vk_loader = loader.getInstanceProcAddrFunc();
+    }
 
     // Open first window
     try open_window(world, 0);
@@ -982,14 +932,17 @@ pub fn main(init: std.process.Init.Minimal) !void {
         };
         std.debug.print("[smoke] vulkan instance created\n", .{});
 
-        const surface = zpugl.vulkan.createSurface(primary_view, inst) catch |e| {
-            std.debug.print("[smoke] FAIL: createSurface error={s}\n", .{@errorName(e)});
+        var surface: zpugl.vulkan.VkSurfaceKHR = .null_handle;
+        const r = zpugl.vulkan.createSurface(g_vk_loader.?, primary_view, inst, null, &surface);
+        if (r != zpugl.vulkan.VK_SUCCESS or surface == .null_handle) {
+            std.debug.print("[smoke] FAIL: createSurface result={d}\n", .{r});
             vk_destroy_instance(inst);
             std.process.exit(1);
-        };
-        std.debug.print("[smoke] vulkan surface created handle={*}\n", .{surface});
+        }
+        std.debug.print("[smoke] vulkan surface created handle={x}\n", .{@backingInt(surface)});
 
-        zpugl.vulkan.destroySurface(inst, surface);
+        const destroy_surface: *const fn (zpugl.vulkan.VkInstance, zpugl.vulkan.VkSurfaceKHR, ?*const anyopaque) callconv(.c) void = @ptrCast(g_vk_loader.?(inst, "vkDestroySurfaceKHR").?);
+        destroy_surface(inst, surface, null);
         vk_destroy_instance(inst);
         std.debug.print("[smoke] PASS: vulkan e2e backend={s}\n", .{g_backend_name});
 

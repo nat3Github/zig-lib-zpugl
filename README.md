@@ -89,16 +89,63 @@ plugin.set_parent(native); // CLAP: clap_window_t.ptr, VST3: IPlugView::attached
 
 The plugin creates its own child window inside yours. zpugl's event loop (`world.update`) keeps your window processing messages, which the OS propagates to the plugin's child window automatically.
 
+## Graphics backends
+
+### `.gl` — OpenGL
+
+Creates a platform GL context (NSOpenGLContext / WGL / GLX). The context is made current automatically around each `.expose` event. Call `glDraw*` directly in the expose handler.
+
+Configure the context before `realize`:
+
+```zig
+_ = view.setHint(.context_version_major, 3);
+_ = view.setHint(.context_version_minor, 3);
+_ = view.setHint(.context_profile, @intFromEnum(zpugl.ViewHintValue.opengl_core_profile));
+_ = view.setHint(.double_buffer, @intFromEnum(zpugl.ViewHintValue.true));
+```
+
+### `.stub` — no graphics context
+
+native window with no GL context.
+
+- Hosting a plugin that provides its own rendering
+- Embedding a third-party UI framework (e.g. JUCE, iPlug2) that manages its own context
+- You only need the window handle, not rendering
+
+### `.metal` / `.vulkan`
+
+For `.metal`, `view.getContext()` returns the `CAMetalLayer`. Rendering is up to you.
+
+`.vulkan` follows pugl's `vulkan.h`. zpugl loads the Vulkan library and creates the surface, instance, device and swapchain belong to you:
+
+```zig
+var loader = try zpugl.vulkan.Loader.init(world, null); // null: vulkan-1.dll, libvulkan.so, libvulkan.dylib/MoltenVK
+defer loader.deinit();
+const gipa = loader.getInstanceProcAddrFunc().?;
+const exts = zpugl.vulkan.getInstanceExtensions(); // enable these on the VkInstance
+var surface: zpugl.vulkan.VkSurfaceKHR = .null_handle;
+if (zpugl.vulkan.createSurface(gipa, view, instance, null, &surface) != zpugl.vulkan.VK_SUCCESS) return error.Surface;
+```
+
+| Platform | Surface extension                 | Library                                                                |
+| -------- | --------------------------------- | ---------------------------------------------------------------------- |
+| Windows  | `VK_KHR_win32_surface`            | `vulkan-1.dll`                                                         |
+| Linux    | `VK_KHR_xlib_surface`             | `libvulkan.so`                                                         |
+| Android  | `VK_KHR_android_surface`          | `libvulkan.so`                                                         |
+| macOS    | `VK_EXT_metal_surface` (MoltenVK) | `libvulkan.dylib`, `libMoltenVK.dylib`, also under `/opt/homebrew/lib` |
+| iOS      | `VK_EXT_metal_surface` (MoltenVK) | linked into the app, or `MoltenVK.framework`                           |
+
+With the Vulkan loader on macOS the instance also needs `VK_KHR_portability_enumeration` and its create flag.
+
 ## Platform notes
 
-| Platform | Windowing          | Window type        | GL              |
-| -------- | ------------------ | ------------------ | --------------- |
-| macOS    | Cocoa (zig-objc)   | NSView in NSWindow | NSOpenGLContext |
-| iOS      | UIKit (zig-objc)   | UIView             | none (Metal)    |
-| Windows  | Win32              | HWND               | WGL             |
-| Linux    | X11                | XID (Window)       | GLX             |
-| Android  | NativeActivity     | ANativeWindow      | EGL / GLES 3    |
-
+| Platform | Windowing        | Window type        | GL              |
+| -------- | ---------------- | ------------------ | --------------- |
+| macOS    | Cocoa (zig-objc) | NSView in NSWindow | NSOpenGLContext |
+| iOS      | UIKit (zig-objc) | UIView             | none (Metal)    |
+| Windows  | Win32            | HWND               | WGL             |
+| Linux    | X11              | XID (Window)       | GLX             |
+| Android  | NativeActivity   | ANativeWindow      | EGL / GLES 3    |
 
 Cross-compiling to Linux needs no headers (X11/GL types are declared in Zig); pass `-Dlibrary_path=<dir with libX11/libXcursor/libXrender/libGL .so>` for the link step.
 

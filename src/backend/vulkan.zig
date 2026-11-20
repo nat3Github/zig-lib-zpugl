@@ -1,170 +1,190 @@
-// Vulkan surface-only backend for zpugl.
-//
-// Mirrors pugl's Vulkan backend contract: the host application owns
-// VkInstance/VkPhysicalDevice/VkDevice/VkQueue and the swapchain. This
-// backend's only job is to:
-//   * (optionally) attach a CAMetalLayer to the NSView on macOS so the host
-//     can call vkCreateMetalSurfaceEXT against it.
-//   * expose a `createSurface` helper that wraps the platform-specific
-//     surface-creation Vulkan extension.
-//
-// All Vulkan symbols are looked up at runtime via vkGetInstanceProcAddr,
-// supplied by the host through `setLoader`. We do NOT link Vulkan and we
-// do NOT @cImport vulkan.h — only the few ABI bits we need are hand-declared.
-
 const std = @import("std");
 const builtin = @import("builtin");
 const root = @import("../root.zig");
-
-// ─── Hand-declared Vulkan ABI ────────────────────────────────────────────────
+const metal = @import("metal.zig");
 
 pub const VkInstance = *opaque {};
-pub const VkSurfaceKHR = *opaque {};
+pub const VkDevice = *opaque {};
+pub const VkSurfaceKHR = enum(u64) { null_handle = 0, _ };
 pub const VkResult = i32;
-pub const VkFlags = u32;
-pub const VK_SUCCESS: VkResult = 0;
-
-// Opaque allocation callback pointer (we never construct one).
 pub const VkAllocationCallbacks = opaque {};
 
-// VkStructureType values we use.
-const VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT: i32 = 1000217000;
-const VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR: i32 = 1000004000;
-const VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR: i32 = 1000009000;
-
-pub const VkMetalSurfaceCreateInfoEXT = extern struct {
-    sType: i32 = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT,
-    pNext: ?*const anyopaque = null,
-    flags: VkFlags = 0,
-    pLayer: *const anyopaque, // const CAMetalLayer*
-};
-
-pub const VkXlibSurfaceCreateInfoKHR = extern struct {
-    sType: i32 = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR,
-    pNext: ?*const anyopaque = null,
-    flags: VkFlags = 0,
-    dpy: *anyopaque, // Display*
-    window: c_ulong, // Window
-};
-
-pub const VkWin32SurfaceCreateInfoKHR = extern struct {
-    sType: i32 = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
-    pNext: ?*const anyopaque = null,
-    flags: VkFlags = 0,
-    hinstance: ?*anyopaque, // HINSTANCE
-    hwnd: ?*anyopaque, // HWND
-};
+pub const VK_SUCCESS: VkResult = 0;
+pub const VK_ERROR_INITIALIZATION_FAILED: VkResult = -3;
+pub const VK_ERROR_EXTENSION_NOT_PRESENT: VkResult = -7;
 
 pub const PFN_vkVoidFunction = *const fn () callconv(.c) void;
-pub const PFN_vkGetInstanceProcAddr = *const fn (
-    instance: ?VkInstance,
-    name: [*:0]const u8,
-) callconv(.c) ?PFN_vkVoidFunction;
+pub const PFN_vkGetInstanceProcAddr = *const fn (instance: ?VkInstance, name: [*:0]const u8) callconv(.c) ?PFN_vkVoidFunction;
+pub const PFN_vkGetDeviceProcAddr = *const fn (device: VkDevice, name: [*:0]const u8) callconv(.c) ?PFN_vkVoidFunction;
 
-const PFN_vkCreateMetalSurfaceEXT = *const fn (
-    instance: VkInstance,
-    pCreateInfo: *const VkMetalSurfaceCreateInfoEXT,
-    pAllocator: ?*const VkAllocationCallbacks,
-    pSurface: *VkSurfaceKHR,
-) callconv(.c) VkResult;
+const is_android = builtin.abi.isAndroid();
+const is_apple = builtin.os.tag == .macos or builtin.os.tag == .ios;
 
-const PFN_vkCreateXlibSurfaceKHR = *const fn (
-    instance: VkInstance,
-    pCreateInfo: *const VkXlibSurfaceCreateInfoKHR,
-    pAllocator: ?*const VkAllocationCallbacks,
-    pSurface: *VkSurfaceKHR,
-) callconv(.c) VkResult;
+const Lib = if (builtin.os.tag == .windows) struct {
+    const HMODULE = *opaque {};
+    extern "kernel32" fn LoadLibraryExA(name: [*:0]const u8, file: ?*anyopaque, flags: u32) callconv(.winapi) ?HMODULE;
+    extern "kernel32" fn GetProcAddress(module: HMODULE, name: [*:0]const u8) callconv(.winapi) ?*anyopaque;
+    extern "kernel32" fn FreeLibrary(module: HMODULE) callconv(.winapi) i32;
+    const LOAD_LIBRARY_SEARCH_DEFAULT_DIRS = 0x00001000;
 
-const PFN_vkCreateWin32SurfaceKHR = *const fn (
-    instance: VkInstance,
-    pCreateInfo: *const VkWin32SurfaceCreateInfoKHR,
-    pAllocator: ?*const VkAllocationCallbacks,
-    pSurface: *VkSurfaceKHR,
-) callconv(.c) VkResult;
+    handle: HMODULE,
 
-const PFN_vkDestroySurfaceKHR = *const fn (
-    instance: VkInstance,
-    surface: VkSurfaceKHR,
-    pAllocator: ?*const VkAllocationCallbacks,
-) callconv(.c) void;
+    fn open(name: ?[*:0]const u8) ?@This() {
+        return .{ .handle = LoadLibraryExA(name orelse return null, null, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) orelse return null };
+    }
+    fn lookup(self: @This(), comptime T: type, name: [*:0]const u8) ?T {
+        return @ptrCast(GetProcAddress(self.handle, name) orelse return null);
+    }
+    fn close(self: @This()) void {
+        _ = FreeLibrary(self.handle);
+    }
+} else struct {
+    handle: *anyopaque,
 
-// ─── Public surface helpers ──────────────────────────────────────────────────
-
-pub const VkLoader = PFN_vkGetInstanceProcAddr;
-
-var g_loader: ?VkLoader = null;
-
-pub fn setLoader(loader: VkLoader) void {
-    g_loader = loader;
-}
-
-pub const SurfaceError = error{
-    NoLoader,
-    MissingExtension,
-    NoContext,
-    SurfaceCreateFailed,
+    fn open(name: ?[*:0]const u8) ?@This() {
+        return .{ .handle = std.c.dlopen(name, .{ .LAZY = true }) orelse return null };
+    }
+    fn lookup(self: @This(), comptime T: type, name: [*:0]const u8) ?T {
+        return @ptrCast(@alignCast(std.c.dlsym(self.handle, name) orelse return null));
+    }
+    fn close(self: @This()) void {
+        _ = std.c.dlclose(self.handle);
+    }
 };
 
-pub fn createSurface(view: *root.View, instance: VkInstance) SurfaceError!VkSurfaceKHR {
-    const loader = g_loader orelse return error.NoLoader;
-    var surface: VkSurfaceKHR = undefined;
+const default_libraries: []const ?[*:0]const u8 = if (is_android)
+    &.{"libvulkan.so"}
+else switch (builtin.os.tag) {
+    .windows => &.{"vulkan-1.dll"},
+    .macos => &.{ "libvulkan.dylib", "libvulkan.1.dylib", "libMoltenVK.dylib", "/opt/homebrew/lib/libvulkan.1.dylib", "/opt/homebrew/lib/libMoltenVK.dylib" },
+    .ios => &.{ null, "MoltenVK.framework/MoltenVK" },
+    else => &.{ "libvulkan.so", "libvulkan.so.1" },
+};
 
-    switch (builtin.os.tag) {
-        .macos => {
-            const layer = mac.get_context_ptr(view) orelse return error.NoContext;
-            const fn_ptr = loader(instance, "vkCreateMetalSurfaceEXT") orelse
-                return error.MissingExtension;
-            const create_fn: PFN_vkCreateMetalSurfaceEXT = @ptrCast(@alignCast(fn_ptr));
-            const info = VkMetalSurfaceCreateInfoEXT{ .pLayer = layer };
-            const r = create_fn(instance, &info, null, &surface);
-            if (r != VK_SUCCESS) return error.SurfaceCreateFailed;
-            return surface;
-        },
-        .windows => {
-            const hwnd = view.handle orelse return error.NoContext;
-            const win32 = @import("win32.zig");
-            const hinstance = win32.GetModuleHandleW(null);
-            const fn_ptr = loader(instance, "vkCreateWin32SurfaceKHR") orelse
-                return error.MissingExtension;
-            const create_fn: PFN_vkCreateWin32SurfaceKHR = @ptrCast(@alignCast(fn_ptr));
-            const info = VkWin32SurfaceCreateInfoKHR{
-                .hinstance = hinstance,
-                .hwnd = hwnd,
-            };
-            const r = create_fn(instance, &info, null, &surface);
-            if (r != VK_SUCCESS) return error.SurfaceCreateFailed;
-            return surface;
-        },
-        .linux => {
-            const x11 = @import("x11.zig");
-            const win_id: c_ulong = @intCast(@intFromPtr(view.handle orelse return error.NoContext));
-            const world_impl: *x11.WorldImpl = @ptrCast(@alignCast(view.world.impl orelse
-                return error.NoContext));
-            const fn_ptr = loader(instance, "vkCreateXlibSurfaceKHR") orelse
-                return error.MissingExtension;
-            const create_fn: PFN_vkCreateXlibSurfaceKHR = @ptrCast(@alignCast(fn_ptr));
-            const info = VkXlibSurfaceCreateInfoKHR{
-                .dpy = @ptrCast(world_impl.display),
-                .window = win_id,
-            };
-            const r = create_fn(instance, &info, null, &surface);
-            if (r != VK_SUCCESS) return error.SurfaceCreateFailed;
-            return surface;
-        },
-        else => return error.MissingExtension,
+pub const Loader = struct {
+    lib: Lib,
+    get_instance_proc_addr: ?PFN_vkGetInstanceProcAddr,
+    get_device_proc_addr: ?PFN_vkGetDeviceProcAddr,
+
+    pub fn init(world: *root.World, library_name: ?[*:0]const u8) error{VulkanLibraryNotFound}!Loader {
+        _ = world;
+        const lib = if (library_name) |name| Lib.open(name) else for (default_libraries) |name| {
+            const l = Lib.open(name) orelse continue;
+            if (l.lookup(PFN_vkGetInstanceProcAddr, "vkGetInstanceProcAddr") != null) break l;
+            l.close();
+        } else null;
+        const l = lib orelse return error.VulkanLibraryNotFound;
+        return .{
+            .lib = l,
+            .get_instance_proc_addr = l.lookup(PFN_vkGetInstanceProcAddr, "vkGetInstanceProcAddr"),
+            .get_device_proc_addr = l.lookup(PFN_vkGetDeviceProcAddr, "vkGetDeviceProcAddr"),
+        };
     }
+
+    pub fn deinit(self: *Loader) void {
+        self.lib.close();
+        self.* = undefined;
+    }
+
+    pub fn getInstanceProcAddrFunc(self: *const Loader) ?PFN_vkGetInstanceProcAddr {
+        return self.get_instance_proc_addr;
+    }
+
+    pub fn getDeviceProcAddrFunc(self: *const Loader) ?PFN_vkGetDeviceProcAddr {
+        return self.get_device_proc_addr;
+    }
+};
+
+const platform_extension: [*:0]const u8 = if (is_android)
+    "VK_KHR_android_surface"
+else switch (builtin.os.tag) {
+    .windows => "VK_KHR_win32_surface",
+    .macos, .ios => "VK_EXT_metal_surface",
+    else => "VK_KHR_xlib_surface",
+};
+
+const instance_extensions = [_][*:0]const u8{ "VK_KHR_surface", platform_extension };
+
+pub fn getInstanceExtensions() []const [*:0]const u8 {
+    return &instance_extensions;
 }
 
-pub fn destroySurface(instance: VkInstance, surface: VkSurfaceKHR) void {
-    const loader = g_loader orelse return;
-    const fn_ptr = loader(instance, "vkDestroySurfaceKHR") orelse return;
-    const destroy_fn: PFN_vkDestroySurfaceKHR = @ptrCast(@alignCast(fn_ptr));
-    destroy_fn(instance, surface, null);
+const VkStructureType = enum(i32) {
+    xlib_surface_create_info = 1000004000,
+    android_surface_create_info = 1000008000,
+    win32_surface_create_info = 1000009000,
+    metal_surface_create_info = 1000217000,
+};
+
+const SurfaceCreateInfo = if (is_android) extern struct {
+    s_type: VkStructureType = .android_surface_create_info,
+    next: ?*const anyopaque = null,
+    flags: u32 = 0,
+    window: *anyopaque,
+} else switch (builtin.os.tag) {
+    .windows => extern struct {
+        s_type: VkStructureType = .win32_surface_create_info,
+        next: ?*const anyopaque = null,
+        flags: u32 = 0,
+        hinstance: ?*anyopaque,
+        hwnd: *anyopaque,
+    },
+    .macos, .ios => extern struct {
+        s_type: VkStructureType = .metal_surface_create_info,
+        next: ?*const anyopaque = null,
+        flags: u32 = 0,
+        layer: *anyopaque,
+    },
+    else => extern struct {
+        s_type: VkStructureType = .xlib_surface_create_info,
+        next: ?*const anyopaque = null,
+        flags: u32 = 0,
+        dpy: *anyopaque,
+        window: c_ulong,
+    },
+};
+
+const create_surface_name: [*:0]const u8 = if (is_android)
+    "vkCreateAndroidSurfaceKHR"
+else switch (builtin.os.tag) {
+    .windows => "vkCreateWin32SurfaceKHR",
+    .macos, .ios => "vkCreateMetalSurfaceEXT",
+    else => "vkCreateXlibSurfaceKHR",
+};
+
+const PFN_vkCreateSurface = *const fn (VkInstance, *const SurfaceCreateInfo, ?*const VkAllocationCallbacks, *VkSurfaceKHR) callconv(.c) VkResult;
+
+extern "kernel32" fn GetModuleHandleW(name: ?[*:0]const u16) callconv(.winapi) ?*anyopaque;
+
+fn surfaceCreateInfo(view: *root.View) ?SurfaceCreateInfo {
+    const handle = view.handle orelse return null;
+    if (is_android) return .{ .window = handle };
+    return switch (builtin.os.tag) {
+        .windows => .{ .hinstance = GetModuleHandleW(null), .hwnd = handle },
+        .macos, .ios => .{ .layer = @ptrFromInt(if (view.gl_context != 0) view.gl_context else return null) },
+        else => .{
+            .dpy = @as(*@import("x11.zig").WorldImpl, @ptrCast(@alignCast(view.world.impl orelse return null))).display,
+            .window = @intCast(@intFromPtr(handle)),
+        },
+    };
 }
 
-// ─── GraphicsBackend dispatch ────────────────────────────────────────────────
+pub fn createSurface(
+    get_instance_proc_addr: PFN_vkGetInstanceProcAddr,
+    view: *root.View,
+    instance: VkInstance,
+    allocator: ?*const VkAllocationCallbacks,
+    surface: *VkSurfaceKHR,
+) VkResult {
+    std.debug.assert(view.graphics_backend == .vulkan);
+    const info = surfaceCreateInfo(view) orelse return VK_ERROR_INITIALIZATION_FAILED;
+    const create_fn: PFN_vkCreateSurface = @ptrCast(get_instance_proc_addr(instance, create_surface_name) orelse
+        return VK_ERROR_EXTENSION_NOT_PRESENT);
+    return create_fn(instance, &info, allocator, surface);
+}
 
 pub fn get_backend() root.GraphicsBackend {
+    if (is_apple) return metal.get_backend();
     return .{
         .configure = configure,
         .create = create,
@@ -179,20 +199,11 @@ fn configure(_: ?*anyopaque) root.Status {
     return .success;
 }
 
-fn create(v: ?*anyopaque) root.Status {
-    const view: *root.View = @ptrCast(@alignCast(v.?));
-    return switch (builtin.os.tag) {
-        .macos => mac.create(view),
-        // Linux/Windows: nothing to do at create time. Surface handle lives
-        // with caller, and view.handle already carries the window id.
-        else => .success,
-    };
+fn create(_: ?*anyopaque) root.Status {
+    return .success;
 }
 
-fn destroy(v: ?*anyopaque) void {
-    const view: *root.View = @ptrCast(@alignCast(v.?));
-    if (builtin.os.tag == .macos) mac.destroy(view);
-}
+fn destroy(_: ?*anyopaque) void {}
 
 fn enter(_: ?*anyopaque, _: ?*const root.ExposeEvent) root.Status {
     return .success;
@@ -204,73 +215,5 @@ fn leave(_: ?*anyopaque, _: ?*const root.ExposeEvent) root.Status {
 
 fn get_context(v: ?*anyopaque) ?*anyopaque {
     const view: *root.View = @ptrCast(@alignCast(v.?));
-    return switch (builtin.os.tag) {
-        .macos => mac.get_context_ptr(view),
-        .windows => view.handle, // HWND
-        else => view.handle, // X11 Window cast as ptr — caller pairs with world.impl
-    };
+    return view.handle;
 }
-
-// ─── macOS: CAMetalLayer attachment ──────────────────────────────────────────
-
-const mac = if (builtin.os.tag == .macos) struct {
-    const objc = @import("objc");
-    const c = objc.c;
-
-    const CGFloat = f64;
-    const NSPoint = extern struct { x: CGFloat, y: CGFloat };
-    const NSSize = extern struct { width: CGFloat, height: CGFloat };
-    const NSRect = extern struct { origin: NSPoint, size: NSSize };
-    const MTLPixelFormatBGRA8Unorm: usize = 80;
-
-    fn create(view: *root.View) root.Status {
-        const native = view.handle orelse return .bad_call;
-        const ns_view: objc.Object = .{ .value = @ptrCast(@alignCast(native)) };
-
-        const layer_class = objc.getClass("CAMetalLayer") orelse return .create_context_failed;
-        const layer = layer_class.msgSend(objc.Object, "alloc", .{})
-            .msgSend(objc.Object, "init", .{});
-        if (layer.value == null) return .create_context_failed;
-
-        layer.msgSend(void, "setPixelFormat:", .{@as(usize, MTLPixelFormatBGRA8Unorm)});
-        ns_view.msgSend(void, "setLayer:", .{layer});
-        ns_view.msgSend(void, "setWantsLayer:", .{true});
-        layer.msgSend(void, "setDelegate:", .{ns_view});
-
-        const bounds = ns_view.msgSend(NSRect, "bounds", .{});
-        const win_id = ns_view.msgSend(c.id, "window", .{});
-        const scale: CGFloat = if (win_id) |w| blk: {
-            const win: objc.Object = .{ .value = w };
-            break :blk win.msgSend(CGFloat, "backingScaleFactor", .{});
-        } else 1.0;
-        layer.msgSend(void, "setContentsScale:", .{scale});
-        layer.msgSend(void, "setDrawableSize:", .{NSSize{
-            .width = bounds.size.width * scale,
-            .height = bounds.size.height * scale,
-        }});
-
-        view.gl_context = @intFromPtr(layer.value);
-        return .success;
-    }
-
-    fn destroy(view: *root.View) void {
-        if (view.gl_context == 0) return;
-        const layer: objc.Object = .{ .value = @ptrFromInt(view.gl_context) };
-        if (view.handle) |native| {
-            const ns_view: objc.Object = .{ .value = @ptrCast(@alignCast(native)) };
-            ns_view.msgSend(void, "setLayer:", .{@as(c.id, null)});
-            ns_view.msgSend(void, "setWantsLayer:", .{false});
-        }
-        layer.msgSend(void, "release", .{});
-        view.gl_context = 0;
-    }
-
-    fn get_context_ptr(view: *root.View) ?*anyopaque {
-        if (view.gl_context == 0) return null;
-        return @ptrFromInt(view.gl_context);
-    }
-} else struct {
-    fn get_context_ptr(_: *root.View) ?*anyopaque {
-        return null;
-    }
-};
