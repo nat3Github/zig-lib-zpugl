@@ -1,0 +1,20 @@
+.{
+    .fingerprint = 0x22fdd547636bffa8,
+    .name = .zpugl,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .objc = .{
+            .url = "git+https://github.com/mitchellh/zig-objc#bee663fdfaa0c554235dc36b1dce88d136a190ec",
+            .hash = "zig_objc-0.0.0-Ir_Sp_4tAQDXtPi51nW_jD9LOEzBvU9lofwO9Pzi6IB4",
+            .lazy = true,
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+        "LICENSE",
+    },
+}
