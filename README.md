@@ -107,14 +107,6 @@ Build options:
 - iOS: `-Dsdk_root=$(xcrun --sdk iphoneos --show-sdk-path)`
 - Android: `-Dandroid_ndk=<ndk root>`, optionally `-Dlibrary_path=<sysroot lib dir>`
 
-## Build
-
-```sh
-zig build run-triangle                    # GL triangle demo
-zig build run-triangle -- --backend=metal # gl | metal | vulkan | stub
-zig build check-cross                     # compile-check Linux, Windows (and macOS on macOS hosts)
-```
-
 To use as a dependency:
 
 ```sh
