@@ -66,7 +66,6 @@ const Cmd = enum(i32) {
 };
 
 extern fn ALooper_pollOnce(timeout_ms: c_int, out_fd: ?*c_int, out_events: ?*c_int, out_data: ?*?*anyopaque) c_int;
-extern fn ALooper_wake(looper: *ALooper) void;
 extern fn ANativeWindow_getWidth(window: *ANativeWindow) i32;
 extern fn ANativeWindow_getHeight(window: *ANativeWindow) i32;
 extern fn AConfiguration_getDensity(config: *AConfiguration) i32;
@@ -114,7 +113,8 @@ const Egl = struct {
 var egl: Egl = .{};
 var current_view: ?*root.View = null;
 var last_size: [2]i32 = .{ 0, 0 };
-var wake_pending: std.atomic.Value(bool) = .init(false);
+var client_queue: std.ArrayList([2]usize) = .empty;
+var redraw_pending = false;
 var destroyed = false;
 
 fn theApp() *App {
@@ -343,7 +343,11 @@ pub fn createView(view: *root.View) root.Status {
 }
 
 pub fn destroyView(view: *root.View) void {
-    if (current_view == view) current_view = null;
+    if (current_view == view) {
+        current_view = null;
+        client_queue.clearRetainingCapacity();
+        redraw_pending = false;
+    }
     view.handle = null;
 }
 
@@ -405,7 +409,7 @@ fn pollOnce(timeout_ms: c_int) void {
 pub fn update(world: *root.World, timeout: f64) root.Status {
     _ = world;
     const a = theApp();
-    const ms: c_int = if (timeout < 0) -1 else @intFromFloat(@min(timeout * 1000.0, std.math.maxInt(c_int)));
+    const ms: c_int = if (client_queue.items.len > 0 or redraw_pending) 0 else if (timeout < 0) -1 else @intFromFloat(@min(timeout * 1000.0, std.math.maxInt(c_int)));
     pollOnce(ms);
     for (0..64) |_| {
         var data: ?*anyopaque = null;
@@ -420,8 +424,14 @@ pub fn update(world: *root.World, timeout: f64) root.Status {
     if (a.window) |window| if (current_view) |v| {
         if (ANativeWindow_getWidth(window) != last_size[0] or ANativeWindow_getHeight(window) != last_size[1]) sendConfigure(v);
     };
-    if (wake_pending.swap(false, .acq_rel)) if (current_view) |v| {
-        _ = common.dispatchEvent(v, &.{ .client = .{ .data1 = 0, .data2 = 0 } });
+    var n = client_queue.items.len;
+    while (n > 0 and client_queue.items.len > 0) : (n -= 1) {
+        const d = client_queue.orderedRemove(0);
+        if (current_view) |v| _ = common.dispatchEvent(v, &.{ .client = .{ .data1 = d[0], .data2 = d[1] } });
+    }
+    if (redraw_pending) if (current_view) |v| if (a.window != null) {
+        redraw_pending = false;
+        _ = common.dispatchEvent(v, &.{ .expose = .{ .x = 0, .y = 0, .width = @intCast(@min(last_size[0], std.math.maxInt(u16))), .height = @intCast(@min(last_size[1], std.math.maxInt(u16))) } });
     };
     return .success;
 }
@@ -448,9 +458,8 @@ pub fn hideView(view: *root.View) root.Status {
 }
 
 pub fn obscureView(view: *root.View) root.Status {
-    _ = view;
-    wake_pending.store(true, .release);
-    if (theApp().looper) |l| ALooper_wake(l);
+    if (view != current_view) return .bad_call;
+    redraw_pending = true;
     return .success;
 }
 
@@ -461,7 +470,11 @@ pub fn obscureRegion(view: *root.View, x: i32, y: i32, w: u32, h: u32) root.Stat
 
 pub fn sendEvent(view: *root.View, event: *const root.Event) root.Status {
     return switch (event.*) {
-        .client => obscureView(view),
+        .client => |cl| {
+            if (view != current_view) return .bad_call;
+            client_queue.append(view.world.allocator, .{ cl.data1, cl.data2 }) catch return .no_memory;
+            return .success;
+        },
         else => .unsupported,
     };
 }
@@ -481,7 +494,8 @@ pub fn setCursor(view: *root.View, cursor: root.Cursor) root.Status {
 }
 
 pub fn deinitWorld(world: *root.World) void {
-    _ = world;
+    client_queue.deinit(world.allocator);
+    client_queue = .empty;
 }
 
 pub fn getNativeWorld(world: *root.World) ?*anyopaque {
