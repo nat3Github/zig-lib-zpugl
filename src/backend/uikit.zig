@@ -18,8 +18,6 @@ extern "c" const kCFRunLoopDefaultMode: ?*const anyopaque;
 extern "c" fn CACurrentMediaTime() f64;
 extern "c" fn objc_autoreleasePoolPush() ?*anyopaque;
 extern "c" fn objc_autoreleasePoolPop(pool: ?*anyopaque) void;
-extern "c" fn dispatch_async_f(queue: *anyopaque, context: ?*anyopaque, work: *const fn (?*anyopaque) callconv(.c) void) void;
-extern "c" var _dispatch_main_q: anyopaque;
 
 const kCFRunLoopRunHandledSource: i32 = 4;
 
@@ -35,6 +33,9 @@ var world_ref: ?*root.World = null;
 var start_time: f64 = 0;
 var touch_slots: [10]c.id = @splat(null);
 var clipboard_buf: std.ArrayList(u8) = .empty;
+var client_queue: std.ArrayList(PendingClient) = .empty;
+
+const PendingClient = struct { view: ?*root.View, data1: usize, data2: usize };
 
 var view_class: ?objc.Class = null;
 var container_class: ?objc.Class = null;
@@ -337,6 +338,9 @@ fn ownedWindow(view: *root.View) ?objc.Object {
 pub fn destroyView(view: *root.View) void {
     const v = uiView(view) orelse return;
     const window = ownedWindow(view);
+    for (client_queue.items) |*p| if (p.view == view) {
+        p.view = null;
+    };
     setZigView(v.value, null);
     v.msgSend(void, "removeFromSuperview", .{});
     v.release();
@@ -366,10 +370,27 @@ pub fn update(world: *root.World, timeout: f64) root.Status {
     if (world.type == .module) return .success;
     const pool = objc_autoreleasePoolPush();
     defer objc_autoreleasePoolPop(pool);
-    if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, 1) == kCFRunLoopRunHandledSource) {
+    const wait = if (client_queue.items.len > 0) 0 else timeout;
+    if (CFRunLoopRunInMode(kCFRunLoopDefaultMode, wait, 1) == kCFRunLoopRunHandledSource) {
         while (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, 1) == kCFRunLoopRunHandledSource) {}
     }
+    dispatchClients();
+    var i: usize = 0;
+    while (i < world.views.items.len) : (i += 1) {
+        if (uiView(world.views.items[i])) |v| v.msgSend(void, "layoutIfNeeded", .{});
+    }
     return .success;
+}
+
+fn dispatchClients() void {
+    const n = client_queue.items.len;
+    for (0..n) |i| {
+        const p = client_queue.items[i];
+        if (p.view) |v| dispatch(v, .{ .client = .{ .data1 = p.data1, .data2 = p.data2 } });
+    }
+    const rest = client_queue.items[n..];
+    std.mem.copyForwards(PendingClient, client_queue.items[0..rest.len], rest);
+    client_queue.shrinkRetainingCapacity(rest.len);
 }
 
 pub fn getTime(_: *root.World) f64 {
@@ -381,24 +402,18 @@ pub fn getScaleFactor(view: *root.View) f64 {
     return v.msgSend(CGFloat, "contentScaleFactor", .{});
 }
 
-fn wakeMain(ctx: ?*anyopaque) callconv(.c) void {
-    const view: *root.View = @ptrCast(@alignCast(ctx orelse return));
-    if (view.handle == null) return;
-    dispatch(view, .{ .client = .{ .data1 = 0, .data2 = 0 } });
-}
-
 pub fn sendEvent(view: *root.View, event: *const root.Event) root.Status {
     if (view.handle == null) return .bad_call;
     switch (event.*) {
-        .client => dispatch_async_f(&_dispatch_main_q, view, wakeMain),
+        .client => |cl| client_queue.append(view.world.allocator, .{ .view = view, .data1 = cl.data1, .data2 = cl.data2 }) catch return .no_memory,
         else => return .unsupported,
     }
     return .success;
 }
 
 pub fn obscureView(view: *root.View) root.Status {
-    if (view.handle == null) return .bad_call;
-    dispatch_async_f(&_dispatch_main_q, view, wakeMain);
+    const v = uiView(view) orelse return .bad_call;
+    v.msgSend(void, "setNeedsLayout", .{});
     return .success;
 }
 
@@ -474,6 +489,8 @@ pub fn deinitWorld(world: *root.World) void {
     if (world_ref == world) world_ref = null;
     clipboard_buf.deinit(world.allocator);
     clipboard_buf = .empty;
+    client_queue.deinit(world.allocator);
+    client_queue = .empty;
 }
 
 pub fn getNativeWorld(_: *root.World) ?*anyopaque {
