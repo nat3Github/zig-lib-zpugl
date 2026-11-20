@@ -4,13 +4,13 @@ Zig port of [pugl](https://gitlab.com/lv2/pugl) — a minimal cross-platform win
 
 ## What it does
 
-zpugl creates native OS windows and delivers input events to a callback. That's it. No widget toolkit, no layout engine, no retained scene graph. You get a window, a graphics context, and a stream of events.
+zpugl creates native OS windows and delivers input events to a callback. You get a window, a graphics context, and a stream of events.
 
 Intended for:
 
 - Audio plugin GUIs (VST3, CLAP, AU) that need to embed into a host window
 - Standalone plugin hosts that need to hand a window handle to a plugin
-- Lightweight GL applications that want direct control over rendering
+- Lightweight applications that want direct control over rendering
 
 ## Core concepts
 
@@ -111,7 +111,7 @@ _ = view.setHint(.double_buffer, @intFromEnum(zpugl.ViewHintValue.true));
 
 ### `.stub` — no graphics context
 
-Creates a native window with no GL context. Use this when:
+Creates a native window with no GL context, for
 
 - Hosting a plugin that provides its own rendering
 - Embedding a third-party UI framework (e.g. JUCE, iPlug2) that manages its own context
@@ -131,9 +131,6 @@ Creates a native window with no GL context. Use this when:
 | Linux    | X11                | XID (Window)       | GLX             |
 | Android  | NativeActivity     | ANativeWindow      | EGL / GLES 3    |
 
-Everything is Zig; no C pugl source is compiled. On Apple platforms the ObjC classes are registered at runtime with a per-binary name suffix, so several plugins that statically link zpugl can live in one host process.
-
-[zig-objc](https://github.com/mitchellh/zig-objc) is a lazy dependency and is only fetched for Apple targets.
 
 Cross-compiling to Linux needs no headers (X11/GL types are declared in Zig); pass `-Dlibrary_path=<dir with libX11/libXcursor/libXrender/libGL .so>` for the link step.
 
@@ -164,4 +161,4 @@ exe.root_module.addImport("zpugl", zpugl.module("zpugl"));
 
 ## License
 
-ISC, same as pugl. See [LICENSE](LICENSE).
+ISC. See [LICENSE](LICENSE).
