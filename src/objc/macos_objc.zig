@@ -204,13 +204,12 @@ fn exposeIfVisible(self: c.id, rect: NSRect) void {
     const p = ivarPtr(self) orelse return;
     const win = objFromId(self).msgSend(c.id, "window", .{}) orelse return;
     if (!objFromId(win).msgSend(bool, "isVisible", .{})) return;
-    zpugl_on_expose(
-        p,
-        @intFromFloat(rect.origin.x),
-        @intFromFloat(rect.origin.y),
-        @intFromFloat(rect.size.width),
-        @intFromFloat(rect.size.height),
-    );
+    if (objFromId(self).msgSend(bool, "isHiddenOrHasHiddenAncestor", .{})) return;
+    sendRect(zpugl_on_expose, p, rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
+}
+
+fn sendRect(comptime f: anytype, p: *anyopaque, x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat) void {
+    f(p, std.math.lossyCast(i16, x), std.math.lossyCast(i16, y), std.math.lossyCast(u16, w), std.math.lossyCast(u16, h));
 }
 
 fn impDrawRect(self: c.id, _: c.SEL, dirty: NSRect) callconv(.c) void {
@@ -221,15 +220,7 @@ fn impSetFrameSize(self: c.id, _: c.SEL, new_size: NSSize) callconv(.c) void {
     const obj = objFromId(self);
     obj.msgSendSuper(nsView(), void, "setFrameSize:", .{new_size});
     const frame = obj.msgSend(NSRect, "frame", .{});
-    if (ivarPtr(self)) |p| {
-        zpugl_on_configure(
-            p,
-            @intFromFloat(frame.origin.x),
-            @intFromFloat(frame.origin.y),
-            @intFromFloat(new_size.width),
-            @intFromFloat(new_size.height),
-        );
-    }
+    if (ivarPtr(self)) |p| sendRect(zpugl_on_configure, p, frame.origin.x, frame.origin.y, new_size.width, new_size.height);
 }
 
 fn buttonImpl(self: c.id, event: c.id, press: bool, btn: u32) void {
@@ -1030,7 +1021,7 @@ export fn zpugl_mac_realized(native: usize, view_ptr: *anyopaque) void {
     const view = objFromId(@ptrFromInt(native));
     setIvarPtr(view.value, view_ptr);
     const frame = view.msgSend(NSRect, "frame", .{});
-    zpugl_on_configure(view_ptr, @intFromFloat(frame.origin.x), @intFromFloat(frame.origin.y), @intFromFloat(frame.size.width), @intFromFloat(frame.size.height));
+    sendRect(zpugl_on_configure, view_ptr, frame.origin.x, frame.origin.y, frame.size.width, frame.size.height);
 }
 
 export fn zpugl_mac_destroy_view(native: usize) void {
