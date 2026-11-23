@@ -15,7 +15,6 @@
         "build.zig.zon",
         "src",
         "dvui",
-        "README.md",
         "LICENSE",
     },
 }
