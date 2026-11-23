@@ -638,9 +638,6 @@ pub const View = struct {
 
     pub fn setHint(self: *View, hint: ViewHint, value: i32) Status {
         self.hints[@backingInt(hint)] = value;
-        if (self.handle != null and @hasDecl(backend, "applyHint")) {
-            _ = backend.applyHint(self, hint);
-        }
         return .success;
     }
 

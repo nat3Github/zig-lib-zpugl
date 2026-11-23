@@ -209,7 +209,6 @@ pub extern fn zpugl_mac_set_clipboard(mime: [*:0]const u8, data: [*]const u8, le
 pub extern fn zpugl_mac_get_clipboard(native: usize, clipboard: u32, out_data: *[*]const u8, out_len: *usize, type_index: u32) u32;
 pub extern fn zpugl_mac_get_num_clipboard_types(native: usize, clipboard: u32) u32;
 pub extern fn zpugl_mac_get_clipboard_type(native: usize, clipboard: u32, idx: u32) ?[*:0]const u8;
-pub extern fn zpugl_mac_set_dark_frame(native: usize, dark: bool) void;
 pub extern fn zpugl_mac_paste(zig_view: *anyopaque) u32;
 pub extern fn zpugl_mac_obscure_region(native: usize, x: f64, y: f64, w: f64, h: f64) void;
 pub extern fn zpugl_mac_set_transient_parent(child_native: usize, parent_native: usize) u32;
@@ -431,18 +430,6 @@ pub fn acceptOffer(view: *root.View, offer: *const root.DataOfferEvent, type_ind
     const r = zpugl_mac_accept_offer(native, type_index, @backingInt(action));
     return if (r == 0) .success else .failure;
 }
-pub fn applyHint(view: *root.View, hint: root.ViewHint) root.Status {
-    switch (hint) {
-        .dark_frame => {
-            const native = @intFromPtr(view.handle orelse return .bad_call);
-            const dark = view.hints[@backingInt(root.ViewHint.dark_frame)] == @backingInt(root.ViewHintValue.true);
-            zpugl_mac_set_dark_frame(native, dark);
-            return .success;
-        },
-        else => return .unsupported,
-    }
-}
-
 pub fn rejectOffer(view: *root.View, offer: *const root.DataOfferEvent, rx: i32, ry: i32, rw: u32, rh: u32) root.Status {
     _ = view;
     _ = offer;

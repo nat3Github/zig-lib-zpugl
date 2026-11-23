@@ -29,10 +29,8 @@ const NSBackingStoreBuffered: NSUInteger = 2;
 const NSViewLayerContentsRedrawOnSetNeedsDisplay: NSInteger = 1;
 
 const NSEventMaskAny: u64 = ~@as(u64, 0);
-const NSEventTypeApplicationDefined: NSUInteger = 15;
 const NSEventTypeKeyDown: NSUInteger = 10;
 const NSEventTypeKeyUp: NSUInteger = 11;
-const client_subtype: i16 = 0x7a70;
 const NSTerminateCancel: NSUInteger = 0;
 
 const NSTrackingMouseEnteredAndExited: NSUInteger = 0x01;
@@ -1071,20 +1069,6 @@ export fn zpugl_mac_destroy_view(native: usize) void {
     }
 }
 
-export fn zpugl_mac_set_dark_frame(native: usize, dark: bool) void {
-    if (ownWindow(native)) |win| {
-        if (dark) {
-            const ns_str = nsClass("NSString").msgSend(objc.Object, "stringWithUTF8String:", .{@as([*:0]const u8, "NSAppearanceNameDarkAqua")});
-            const appearance = nsClass("NSAppearance").msgSend(objc.Object, "appearanceNamed:", .{ns_str});
-            win.msgSend(void, "setAppearance:", .{appearance});
-        } else {
-            const ns_str = nsClass("NSString").msgSend(objc.Object, "stringWithUTF8String:", .{@as([*:0]const u8, "NSAppearanceNameAqua")});
-            const appearance = nsClass("NSAppearance").msgSend(objc.Object, "appearanceNamed:", .{ns_str});
-            win.msgSend(void, "setAppearance:", .{appearance});
-        }
-    }
-}
-
 export fn zpugl_mac_show_view(native: usize, command: u32) void {
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     view.msgSend(void, "setNeedsDisplay:", .{true});
@@ -1285,38 +1269,53 @@ export fn zpugl_mac_update(timeout: f64) void {
         });
         if (ev == null) break;
         const evo = objFromId(ev);
-        if (evo.msgSend(NSUInteger, "type", .{}) == NSEventTypeApplicationDefined and evo.msgSend(i16, "subtype", .{}) == client_subtype) {
-            dispatchClient(app, evo);
-        } else {
-            app.msgSend(void, "sendEvent:", .{evo});
-        }
+        app.msgSend(void, "sendEvent:", .{evo});
         until = NSDate.msgSend(objc.Object, "distantPast", .{});
     }
 }
 
-fn dispatchClient(app: objc.Object, ev: objc.Object) void {
-    const num = ev.msgSend(NSInteger, "windowNumber", .{});
-    const win = app.msgSend(c.id, "windowWithWindowNumber:", .{num}) orelse return;
+const ClientEvent = struct { window: NSInteger, data1: usize, data2: usize };
+
+const CFRunLoopObserverContext = extern struct {
+    version: isize = 0,
+    info: ?*anyopaque,
+    retain: ?*const anyopaque = null,
+    release: ?*const fn (?*anyopaque) callconv(.c) void,
+    copyDescription: ?*const anyopaque = null,
+};
+const kCFRunLoopBeforeSources: usize = 1 << 2;
+extern "c" const kCFRunLoopCommonModes: *anyopaque;
+extern "c" fn CFRunLoopGetMain() *anyopaque;
+extern "c" fn CFRunLoopObserverCreate(allocator: ?*anyopaque, activities: usize, repeats: bool, order: isize, callout: *const fn (?*anyopaque, usize, ?*anyopaque) callconv(.c) void, context: *const CFRunLoopObserverContext) ?*anyopaque;
+extern "c" fn CFRunLoopAddObserver(rl: *anyopaque, observer: *anyopaque, mode: *anyopaque) void;
+extern "c" fn CFRelease(cf: *anyopaque) void;
+
+fn clientFire(_: ?*anyopaque, _: usize, info: ?*anyopaque) callconv(.c) void {
+    const ev: *const ClientEvent = @ptrCast(@alignCast(info.?));
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
+    const win = nsApp().msgSend(c.id, "windowWithWindowNumber:", .{ev.window}) orelse return;
     const p = zigViewOfWindow(objFromId(win)) orelse return;
-    zpugl_on_client(p, @bitCast(ev.msgSend(NSInteger, "data1", .{})), @bitCast(ev.msgSend(NSInteger, "data2", .{})));
+    zpugl_on_client(p, ev.data1, ev.data2);
+}
+
+fn clientFree(info: ?*anyopaque) callconv(.c) void {
+    std.heap.c_allocator.destroy(@as(*ClientEvent, @ptrCast(@alignCast(info.?))));
 }
 
 export fn zpugl_mac_send_client(native: usize, data1: usize, data2: usize) u32 {
     const pool = objc.AutoreleasePool.init();
     defer pool.deinit();
     const win = viewWindow(native) orelse return 1;
-    const ev = nsClass("NSEvent").msgSend(c.id, "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:", .{
-        NSEventTypeApplicationDefined,
-        NSPoint{ .x = 0, .y = 0 },
-        @as(NSUInteger, 0),
-        @as(NSTimeInterval, 0),
-        win.msgSend(NSInteger, "windowNumber", .{}),
-        @as(c.id, null),
-        client_subtype,
-        @as(NSInteger, @bitCast(data1)),
-        @as(NSInteger, @bitCast(data2)),
-    }) orelse return 1;
-    nsApp().msgSend(void, "postEvent:atStart:", .{ objFromId(ev), false });
+    const ev = std.heap.c_allocator.create(ClientEvent) catch return 1;
+    ev.* = .{ .window = win.msgSend(NSInteger, "windowNumber", .{}), .data1 = data1, .data2 = data2 };
+    const context: CFRunLoopObserverContext = .{ .info = ev, .release = clientFree };
+    const observer = CFRunLoopObserverCreate(null, kCFRunLoopBeforeSources, false, 0, clientFire, &context) orelse {
+        std.heap.c_allocator.destroy(ev);
+        return 1;
+    };
+    CFRunLoopAddObserver(CFRunLoopGetMain(), observer, kCFRunLoopCommonModes);
+    CFRelease(observer);
     return 0;
 }
 
@@ -1391,10 +1390,8 @@ export fn zpugl_mac_start_timer(zig_view: *anyopaque, timer_id: usize, freq: f64
     const key = TimerKey{ .view = @intFromPtr(zig_view), .id = timer_id };
     timers_mutex.lock();
     defer timers_mutex.unlock();
-    if (timers.get(key)) |old| {
-        (objc.Object{ .value = old }).msgSend(void, "invalidate", .{});
-    }
-    timers.put(std.heap.c_allocator, key, t.value) catch return 1;
+    if (timers.get(key)) |old| releaseTimer(old);
+    timers.put(std.heap.c_allocator, key, t.retain().value) catch return 1;
     return 0;
 }
 
@@ -1404,7 +1401,7 @@ fn stopViewTimers(view: usize) void {
     var it = timers.iterator();
     while (it.next()) |entry| {
         if (entry.key_ptr.view != view) continue;
-        (objc.Object{ .value = entry.value_ptr.* }).msgSend(void, "invalidate", .{});
+        releaseTimer(entry.value_ptr.*);
         timers.removeByPtr(entry.key_ptr);
         it = timers.iterator();
     }
@@ -1415,8 +1412,14 @@ export fn zpugl_mac_stop_timer(zig_view: *anyopaque, timer_id: usize) u32 {
     timers_mutex.lock();
     defer timers_mutex.unlock();
     const entry = timers.fetchRemove(key) orelse return 1;
-    (objc.Object{ .value = entry.value }).msgSend(void, "invalidate", .{});
+    releaseTimer(entry.value);
     return 0;
+}
+
+fn releaseTimer(t: c.id) void {
+    const timer: objc.Object = .{ .value = t };
+    timer.msgSend(void, "invalidate", .{});
+    timer.release();
 }
 
 // --- Clipboard ---
