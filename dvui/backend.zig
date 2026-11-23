@@ -584,6 +584,7 @@ pub fn begin(self: *Core, arena: std.mem.Allocator) !void {
     }
     const gb = zpugl.gl.get_backend();
     if (!self.in_expose) _ = gb.enter(self.view, null);
+    self.gl.native.renderTarget(null);
     zpugl.gl.resize(self.view);
     c.glViewport(0, 0, @intFromFloat(self.size.w), @intFromFloat(self.size.h));
     c.glClearColor(0.0, 0.6, 0.8, 1.0);
@@ -676,6 +677,7 @@ pub fn drawClippedTriangles(self: *Core, texture: ?dvui.Texture, vtx: []const dv
 }
 
 pub fn textureCreate(self: *Core, pixels: [*]const u8, options: dvui.Texture.CreateOptions) !dvui.Texture {
+    if (options.width == 0 or options.height == 0) return error.TextureCreate;
     if (self.gl == .vulkan) return self.gl.vulkan.textureCreate(pixels, options);
     if (use_metal) return self.gl.native.textureCreate(pixels, options);
     return opengl.createTexture(pixels, options);
@@ -702,6 +704,7 @@ pub fn textureUpdateSubRect(self: *Core, texture: dvui.Texture, pixels: [*]const
 }
 
 pub fn textureCreateTarget(self: *Core, options: dvui.Texture.CreateOptions) !dvui.TextureTarget {
+    if (options.width == 0 or options.height == 0) return error.TextureCreate;
     if (self.gl == .vulkan) return self.gl.vulkan.targetCreate(options);
     if (use_metal) return self.gl.native.targetCreate(options);
     return opengl.createTarget(options);

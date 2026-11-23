@@ -177,6 +177,7 @@ pub const Renderer = struct {
     pub fn begin(self: *Renderer, w: u32, h: u32) void {
         self.pool = objc_autoreleasePoolPush();
         self.screen_cleared = false;
+        self.target = null;
         self.frame = (self.frame + 1) % frames_in_flight;
         self.frames[self.frame].wait();
         self.buffer_used = 0;
@@ -341,8 +342,21 @@ pub const Renderer = struct {
         };
     }
 
-    pub fn textureUpdate(_: *Renderer, texture: dvui.Texture, pixels: [*]const u8) void {
-        obj(@ptrCast(@alignCast(texture.ptr))).msgSend(void, "replaceRegion:mipmapLevel:withBytes:bytesPerRow:", .{ region(texture.width, texture.height), @as(NSUInteger, 0), pixels, @as(NSUInteger, texture.width * 4) });
+    pub fn textureUpdate(self: *Renderer, texture: dvui.Texture, pixels: [*]const u8) void {
+        const row: NSUInteger = texture.width * 4;
+        const len: NSUInteger = row * texture.height;
+        const staging = self.device.msgSend(objc.Object, "newBufferWithBytes:length:options:", .{ pixels, len, @as(NSUInteger, 0) });
+        defer staging.release();
+        self.endEncoder();
+        const cmd = self.cmd orelse self.queue.msgSend(objc.Object, "commandBuffer", .{});
+        const blit = cmd.msgSend(objc.Object, "blitCommandEncoder", .{});
+        const r = region(texture.width, texture.height);
+        blit.msgSend(void, "copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:", .{
+            staging,                                @as(NSUInteger, 0), row,                len,      r.size,
+            obj(@ptrCast(@alignCast(texture.ptr))), @as(NSUInteger, 0), @as(NSUInteger, 0), r.origin,
+        });
+        blit.msgSend(void, "endEncoding", .{});
+        if (self.cmd == null) cmd.msgSend(void, "commit", .{});
     }
 
     pub fn textureDestroy(_: *Renderer, texture: dvui.Texture) void {
