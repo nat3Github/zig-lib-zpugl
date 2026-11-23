@@ -73,14 +73,14 @@ export fn zpugl_on_scroll(view_ptr: *anyopaque, time: f64, x: f64, y: f64, dx: f
     _ = common.dispatchEvent(view, &ev);
 }
 
-export fn zpugl_on_key(view_ptr: *anyopaque, press: bool, time: f64, x: f64, y: f64, keycode: u32, key: u32, mods: u32, native: usize) void {
+export fn zpugl_on_key(view_ptr: *anyopaque, press: bool, time: f64, x: f64, y: f64, keycode: u32, key: u32, mods: u32) bool {
     const view: *root.View = @ptrCast(@alignCast(view_ptr));
     const state: root.Mods = @bitCast(mods);
     const ev = if (press)
-        root.Event{ .key_press = .{ .time = time, .x = x, .y = y, .root_x = x, .root_y = y, .state = state, .keycode = keycode, .key = key, .native = native } }
+        root.Event{ .key_press = .{ .time = time, .x = x, .y = y, .root_x = x, .root_y = y, .state = state, .keycode = keycode, .key = key } }
     else
         root.Event{ .key_release = .{ .time = time, .x = x, .y = y, .root_x = x, .root_y = y, .state = state, .keycode = keycode, .key = key } };
-    _ = common.dispatchEvent(view, &ev);
+    return common.dispatchEvent(view, &ev) == .success;
 }
 
 export fn zpugl_on_text(view_ptr: *anyopaque, time: f64, x: f64, y: f64, keycode: u32, character: u32, str: [*:0]const u8, mods: u32) void {
@@ -483,7 +483,6 @@ pub fn nswindowContentView(nswindow: *anyopaque) ?*anyopaque {
 
 pub extern fn zpugl_mac_start_text_input(native: usize, x: i32, y: i32, w: u32, h: u32) void;
 pub extern fn zpugl_mac_stop_text_input(native: usize) void;
-pub extern fn zpugl_mac_pass_key(native_view: usize, event: usize, to_host: bool) void;
 pub extern fn zpugl_mac_set_text_input_rect(native: usize, x: i32, y: i32, w: u32, h: u32) void;
 
 pub fn startTextInput(view: *root.View, rect: root.TextInputRect) root.Status {
@@ -495,9 +494,6 @@ pub fn stopTextInput(view: *root.View) root.Status {
     const native = @intFromPtr(view.handle orelse return .bad_call);
     zpugl_mac_stop_text_input(native);
     return .success;
-}
-pub fn passKey(view: *root.View, event: usize, to_host: bool) void {
-    zpugl_mac_pass_key(@intFromPtr(view.handle), event, to_host);
 }
 pub fn setTextInputRect(view: *root.View, rect: root.TextInputRect) root.Status {
     const native = @intFromPtr(view.handle orelse return .bad_call);

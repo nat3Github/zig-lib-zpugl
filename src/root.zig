@@ -200,7 +200,6 @@ pub const KeyEvent = struct {
     state: Mods,
     keycode: u32,
     key: u32,
-    native: usize = 0,
 };
 
 pub const TextEvent = struct {
@@ -862,11 +861,6 @@ pub const View = struct {
     pub fn setTextInputRect(self: *View, rect: TextInputRect) Status {
         if (self.handle == null) return .bad_call;
         return backend.setTextInputRect(self, rect);
-    }
-
-    pub fn passKey(self: *View, native: usize, to_host: bool) void {
-        if (native == 0) return;
-        if (@hasDecl(backend, "passKey")) backend.passKey(self, native, to_host);
     }
 
     pub fn sendEvent(self: *View, event: *const Event) Status {

@@ -25,11 +25,10 @@ pub const Renderer = union(enum) {
 };
 
 const TextChunk = struct { bytes: [8]u8, len: usize, at: usize = 0 };
-const SentKey = struct { native: usize, num: u16 };
-
-pub const injected_native: usize = std.math.maxInt(usize);
 pub const default_wait_step_us = 150_000;
 pub const pointer_physical = builtin.os.tag == .windows or (builtin.os.tag == .linux and !builtin.abi.isAndroid());
+
+pub const Repaint = struct { ctx: *anyopaque, f: *const fn (*anyopaque) void };
 
 pub const Parts = struct {
     world: *zpugl.World,
@@ -65,9 +64,9 @@ scale_override: ?f32 = null,
 headless: bool = false,
 events: std.ArrayList(dvui.Event) = .empty,
 text_queue: std.ArrayList(TextChunk) = .empty,
-key_natives: std.ArrayList(usize) = .empty,
-key_sent: std.ArrayList(SentKey) = .empty,
-injected_used: bool = false,
+key_num: ?u16 = null,
+key_handled: bool = false,
+keys_all_used: bool = false,
 allocator: std.mem.Allocator,
 mouse_x: f32 = 0,
 mouse_y: f32 = 0,
@@ -84,7 +83,7 @@ closed: bool = false,
 woken: bool = false,
 dirty: ?*std.atomic.Value(bool) = null,
 wait_step_us: u32 = default_wait_step_us,
-repaint: ?*const fn (*Core) void = null,
+repaint: ?Repaint = null,
 in_frame: bool = false,
 in_expose: bool = false,
 
@@ -220,12 +219,8 @@ pub fn release(self: *Core) Parts {
 
 fn deinitState(self: *Core) void {
     if (self.win) |*w| w.deinit();
-    for (self.key_natives.items) |n| self.passKey(n, false);
-    for (self.key_sent.items) |k| self.passKey(k.native, false);
     self.events.deinit(self.allocator);
     self.text_queue.deinit(self.allocator);
-    self.key_natives.deinit(self.allocator);
-    self.key_sent.deinit(self.allocator);
     self.pasted.deinit(self.allocator);
 }
 
@@ -327,7 +322,7 @@ fn onEvent(view: *zpugl.View, event: *const zpugl.Event) zpugl.Status {
             if (self.repaint != null and !self.in_frame) {
                 self.in_expose = true;
                 defer self.in_expose = false;
-                self.repaint.?(self);
+                self.repaint.?.f(self.repaint.?.ctx);
             } else self.woken = true;
         },
         .configure => |ev| if (view.getParent() == 0) {
@@ -385,23 +380,17 @@ fn onEvent(view: *zpugl.View, event: *const zpugl.Event) zpugl.Status {
             } } }) catch {};
         },
         .key_press => |ev| {
-            self.events.ensureUnusedCapacity(self.allocator, 1) catch {
-                self.passKey(ev.native, true);
-                return .no_memory;
-            };
-            const native = if (self.textInputActive() and ev.native != injected_native) blk: {
-                self.passKey(ev.native, false);
-                break :blk 0;
-            } else ev.native;
-            self.key_natives.append(self.allocator, native) catch {
-                self.passKey(native, true);
-                return .no_memory;
-            };
-            self.events.appendAssumeCapacity(.{ .evt = .{ .key = .{
+            const active = self.textInputActive();
+            self.events.append(self.allocator, .{ .evt = .{ .key = .{
                 .code = mapKey(ev.key),
                 .action = .down,
                 .mod = mapMods(ev.state),
-            } } });
+            } } }) catch return .no_memory;
+            const r = self.repaint orelse return .success;
+            if (self.in_frame) return .success;
+            self.key_handled = false;
+            r.f(r.ctx);
+            return if (self.key_handled or active or self.keys_all_used) .success else .failure;
         },
         .key_release => |ev| {
             self.events.append(self.allocator, .{ .evt = .{ .key = .{
@@ -455,16 +444,8 @@ fn onEvent(view: *zpugl.View, event: *const zpugl.Event) zpugl.Status {
     return .success;
 }
 
-pub fn injectEvent(self: *Core, event: zpugl.Event) void {
-    _ = onEvent(self.view, &event);
-}
-
-pub fn passKey(self: *Core, native: usize, to_host: bool) void {
-    if (native == injected_native) {
-        self.injected_used = !to_host;
-        return;
-    }
-    self.view.passKey(native, to_host);
+pub fn injectEvent(self: *Core, event: zpugl.Event) zpugl.Status {
+    return onEvent(self.view, &event);
 }
 
 pub fn textInputActive(self: *const Core) bool {
@@ -500,12 +481,12 @@ pub fn run(self: *Core, ctx: anytype, comptime frameFn: fn (@TypeOf(ctx)) anyerr
     const win = &self.win.?;
     const R = struct {
         var saved: @TypeOf(ctx) = undefined;
-        fn paint(core: *Core) void {
-            _ = core.frameOnce(saved, frameFn) catch |err| std.log.err("repaint failed: {s}", .{@errorName(err)});
+        fn paint(core: *anyopaque) void {
+            _ = @as(*Core, @ptrCast(@alignCast(core))).frameOnce(saved, frameFn) catch |err| std.log.err("repaint failed: {s}", .{@errorName(err)});
         }
     };
     R.saved = ctx;
-    self.repaint = R.paint;
+    self.repaint = .{ .ctx = self, .f = R.paint };
     defer self.repaint = null;
     while (!self.closed and !quit_requested.load(.acquire)) {
         const end_us = try self.frameOnce(ctx, frameFn);
@@ -627,8 +608,6 @@ fn feedEvents(self: *Core) void {
     const tq = self.text_queue.items;
     var ti: usize = 0;
     var queued: usize = 0;
-    var ki: usize = 0;
-    defer self.key_natives.clearRetainingCapacity();
     while (self.nextEvent()) |ev| : (queued += 1) {
         while (ti < tq.len and tq[ti].at <= queued) : (ti += 1) _ = win.addEventText(.{ .text = tq[ti].bytes[0..tq[ti].len] }) catch {};
         switch (ev.evt) {
@@ -653,16 +632,9 @@ fn feedEvents(self: *Core) void {
                 else => {},
             },
             .key => |k| {
-                const native: usize = if (k.action == .down) blk: {
-                    std.debug.assert(ki < self.key_natives.items.len);
-                    ki += 1;
-                    break :blk self.key_natives.items[ki - 1];
-                } else 0;
                 const num = win.event_num;
                 _ = win.addEventKey(k) catch {};
-                if (native != 0) {
-                    if (win.event_num == num) self.passKey(native, true) else self.key_sent.append(self.allocator, .{ .native = native, .num = win.event_num }) catch self.passKey(native, true);
-                }
+                if (k.action == .down) self.key_num = if (win.event_num == num) null else win.event_num;
             },
             else => {},
         }
@@ -674,13 +646,10 @@ fn feedEvents(self: *Core) void {
 }
 
 pub fn end(self: *Core) !void {
-    for (self.key_sent.items) |k| {
-        const used = for (self.win.?.events.items) |e| {
-            if (e.num == k.num) break e.handled;
-        } else false;
-        self.passKey(k.native, !used);
-    }
-    self.key_sent.clearRetainingCapacity();
+    if (self.key_num) |num| self.key_handled = for (self.win.?.events.items) |e| {
+        if (e.num == num) break e.handled;
+    } else false;
+    self.key_num = null;
     if (self.gl == .vulkan) return self.gl.vulkan.end();
     if (use_metal) return self.gl.native.end();
     if (self.in_expose) return;

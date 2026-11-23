@@ -863,9 +863,8 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
                     .state = mods,
                     .keycode = xev.key.keycode,
                     .key = key,
-                    .native = if (view.parent != 0) packKey(&xev.key) else 0,
                 } };
-                _ = common.dispatchEvent(view, &kev);
+                const used = common.dispatchEvent(view, &kev) == .success;
                 if (n > 0 and buf[0] >= 0x20 and buf[0] != 0x7F) {
                     var str8: [8]u8 = @splat(0);
                     @memcpy(str8[0..n], buf[0..n]);
@@ -891,6 +890,7 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
                     } };
                     _ = common.dispatchEvent(view, &tev);
                 }
+                passOn(view, impl, &xev.key, true, used);
             } else {
                 const kev = root.Event{ .key_release = .{
                     .time = t,
@@ -903,6 +903,7 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
                     .key = key,
                 } };
                 _ = common.dispatchEvent(view, &kev);
+                passOn(view, impl, &xev.key, false, false);
             }
         },
         ClientMessage_ev => {
@@ -1797,36 +1798,20 @@ pub fn obscureRegion(view: *root.View, x: i32, y: i32, w: u32, h: u32) root.Stat
 
 // Unused key presses of an embedded view go to the host's window.
 // Packed as keycode, modifier state and time.
-fn packKey(key: *const XKeyEvent_t) usize {
-    if (@sizeOf(usize) < 8) return 0;
-    const n: u64 = @as(u64, 1) << 63 | @as(u64, key.keycode & 0xFF) << 48 | @as(u64, key.state & 0xFFFF) << 32 | @as(u32, @truncate(key.time));
-    return @intCast(n);
-}
+var keys_passed_on: std.StaticBitSet(256) = .initEmpty();
 
-pub fn passKey(view: *root.View, native: usize, to_host: bool) void {
-    if (!to_host or @sizeOf(usize) < 8 or view.parent == 0) return;
-    const impl = getWorldImpl(view.world) orelse return;
-    const n: u64 = native;
-    std.debug.assert(n >> 63 == 1);
+fn passOn(view: *root.View, impl: *WorldImpl, key: *const XKeyEvent_t, press: bool, used: bool) void {
+    const code: usize = key.keycode & 0xFF;
+    const passed = keys_passed_on.isSet(code);
+    keys_passed_on.unset(code);
+    if (view.parent == 0 or (if (press) used else !passed)) return;
+    if (press) keys_passed_on.set(code);
     const parent: Window = @intCast(view.parent);
-    var ev: XEvent = .{ .key = .{
-        .type = KeyPress,
-        .serial = 0,
-        .send_event = 1,
-        .display = impl.display,
-        .window = parent,
-        .root = XDefaultRootWindow(impl.display),
-        .subwindow = 0,
-        .time = @as(u32, @truncate(n)),
-        .x = 0,
-        .y = 0,
-        .x_root = 0,
-        .y_root = 0,
-        .state = @intCast((n >> 32) & 0xFFFF),
-        .keycode = @intCast((n >> 48) & 0xFF),
-        .same_screen = 1,
-    } };
-    _ = XSendEvent(impl.display, parent, 1, KeyPressMask, &ev);
+    var ev: XEvent = .{ .key = key.* };
+    ev.key.window = parent;
+    ev.key.subwindow = 0;
+    ev.key.send_event = 1;
+    _ = XSendEvent(impl.display, parent, 1, if (press) KeyPressMask else KeyReleaseMask, &ev);
     _ = XFlush(impl.display);
 }
 

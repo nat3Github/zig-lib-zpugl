@@ -526,28 +526,9 @@ fn ensureTextEdit(view: *root.View, vi: *ViewImpl) void {
     _ = ImmAssociateContext(hwnd, null);
 }
 
-// Unused key presses go to the host, as Win32 child windows do: posted to the
-// parent so the host's message loop sees them. Packed as message, key and lParam.
-fn packKey(msg: UINT, wParam: WPARAM, lParam: LPARAM) usize {
-    if (@sizeOf(usize) < 8) return 0;
-    const sys: u64 = @intFromBool(msg == WM_SYSKEYDOWN);
-    const n: u64 = @as(u64, 1) << 63 | sys << 62 | @as(u64, wParam & 0xFFFF) << 32 | @as(u32, @truncate(@as(usize, @bitCast(lParam))));
-    return @intCast(n);
-}
-
-pub fn passKey(view: *root.View, native: usize, to_host: bool) void {
-    if (!to_host or @sizeOf(usize) < 8) return;
-    const n: u64 = native;
-    std.debug.assert(n >> 63 == 1);
-    const msg: UINT = if ((n >> 62) & 1 == 1) WM_SYSKEYDOWN else WM_KEYDOWN;
-    const wParam: WPARAM = @intCast((n >> 32) & 0xFFFF);
-    const lParam: LPARAM = @bitCast(@as(usize, @as(u32, @truncate(n))));
-    if (view.parent != 0) {
-        _ = PostMessageW(@ptrFromInt(view.parent), msg, wParam, lParam);
-    } else if (view.handle) |hwnd| {
-        _ = DefWindowProcW(hwnd, msg, wParam, lParam);
-    }
-}
+// Unused key presses and their releases go to the host synchronously: sent to the
+// parent, or to DefWindowProcW for a toplevel view.
+var keys_passed_on: std.StaticBitSet(256) = .initEmpty();
 
 const DropTarget = extern struct {
     vtbl: *const IDropTargetVtbl,
@@ -982,34 +963,17 @@ fn wndProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.wina
             } });
             return 0;
         },
-        WM_KEYDOWN, WM_SYSKEYDOWN => {
-            const key = vkToKey(wParam, lParam);
-            _ = common.dispatchEvent(view, &root.Event{ .key_press = .{
-                .time = now,
-                .x = 0,
-                .y = 0,
-                .root_x = 0,
-                .root_y = 0,
-                .state = mods,
-                .keycode = @intCast(wParam),
-                .key = key,
-                .native = packKey(msg, wParam, lParam),
-            } });
-            return 0;
-        },
-        WM_KEYUP, WM_SYSKEYUP => {
-            const key = vkToKey(wParam, lParam);
-            _ = common.dispatchEvent(view, &root.Event{ .key_release = .{
-                .time = now,
-                .x = 0,
-                .y = 0,
-                .root_x = 0,
-                .root_y = 0,
-                .state = mods,
-                .keycode = @intCast(wParam),
-                .key = key,
-            } });
-            return 0;
+        WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP => {
+            const press = msg == WM_KEYDOWN or msg == WM_SYSKEYDOWN;
+            const ev: root.KeyEvent = .{ .time = now, .x = 0, .y = 0, .root_x = 0, .root_y = 0, .state = mods, .keycode = @intCast(wParam), .key = vkToKey(wParam, lParam) };
+            const used = common.dispatchEvent(view, &if (press) root.Event{ .key_press = ev } else root.Event{ .key_release = ev }) == .success;
+            const vk: usize = wParam & 0xFF;
+            const passed = keys_passed_on.isSet(vk);
+            keys_passed_on.unset(vk);
+            if (if (press) used else !passed) return 0;
+            if (press) keys_passed_on.set(vk);
+            if (view.parent != 0) return SendMessageW(@ptrFromInt(view.parent), msg, wParam, lParam);
+            return DefWindowProcW(hwnd, msg, wParam, lParam);
         },
         WM_CHAR => {
             const unit: u16 = @intCast(wParam & 0xFFFF);
