@@ -751,6 +751,7 @@ pub const View = struct {
     }
 
     pub fn setSizeHint(self: *View, hint: SizeHint, width: u32, height: u32) Status {
+        if (hint == .current_size) return if (self.handle == null) .failure else backend.setViewSize(self, width, height);
         self.size_hints[@backingInt(hint)] = .{
             .width = @intCast(@min(width, std.math.maxInt(u16))),
             .height = @intCast(@min(height, std.math.maxInt(u16))),
@@ -764,6 +765,7 @@ pub const View = struct {
     }
 
     pub fn setPositionHint(self: *View, hint: PositionHint, x: i32, y: i32) Status {
+        if (hint == .current_position) return if (self.handle == null) .failure else backend.setViewPosition(self, x, y);
         self.pos_hints[@backingInt(hint)] = .{
             .x = @intCast(std.math.clamp(x, std.math.minInt(i16), std.math.maxInt(i16))),
             .y = @intCast(std.math.clamp(y, std.math.minInt(i16), std.math.maxInt(i16))),
@@ -1069,6 +1071,10 @@ test "unrealized views return bad_call" {
     };
     for (results) |s| try std.testing.expectEqual(Status.bad_call, s);
     try std.testing.expect(!view.hasFocus());
+    try std.testing.expectEqual(Status.failure, view.setSizeHint(.current_size, 10, 10));
+    try std.testing.expectEqual(Area{ .width = 0, .height = 0 }, view.getSizeHint(.current_size));
+    try std.testing.expectEqual(Status.failure, view.setPositionHint(.current_position, 10, 10));
+    try std.testing.expectEqual(view.getPositionHint(.default_position), view.getPositionHint(.current_position));
 }
 
 test "unrealize without realize" {
