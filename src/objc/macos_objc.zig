@@ -834,6 +834,11 @@ fn impMetalSetNeedsDisplay(self: c.id, _: c.SEL, flag: bool) callconv(.c) void {
     objFromId(self).msgSendSuper(ensureViewClass(), void, "setNeedsDisplay:", .{flag});
 }
 
+fn impMetalSetNeedsDisplayInRect(self: c.id, _: c.SEL, rect: NSRect) callconv(.c) void {
+    displayRequestedPtr(self).* = 1;
+    objFromId(self).msgSendSuper(ensureViewClass(), void, "setNeedsDisplayInRect:", .{rect});
+}
+
 fn impMetalDisplayLayer(self: c.id, _: c.SEL, _: c.id) callconv(.c) void {
     const requested = displayRequestedPtr(self);
     if (requested.* == 0) return;
@@ -847,6 +852,7 @@ fn ensureMetalViewClass() objc.Class {
     _ = cls.addIvar("displayRequested");
     std.debug.assert(cls.addMethod("makeBackingLayer", impMakeBackingLayer));
     std.debug.assert(cls.addMethod("setNeedsDisplay:", impMetalSetNeedsDisplay));
+    std.debug.assert(cls.addMethod("setNeedsDisplayInRect:", impMetalSetNeedsDisplayInRect));
     std.debug.assert(cls.addMethod("displayLayer:", impMetalDisplayLayer));
     objc.registerClassPair(cls);
     metal_view_class = cls;
