@@ -109,6 +109,8 @@ pub const GLState = struct {
     ebo: c.GLuint = 0,
     target_fbo: c.GLuint = 0,
     target_size: ?dvui.Size.Physical = null,
+    screen_width: u32 = 0,
+    screen_height: u32 = 0,
 
     pub fn init() !GLState {
         var self = GLState{};
@@ -183,6 +185,12 @@ pub const GLState = struct {
         c.glDeleteBuffers(1, &self.ebo);
     }
 
+    pub fn begin(self: *GLState, w: u32, h: u32) void {
+        self.renderTarget(null);
+        self.screen_width = w;
+        self.screen_height = h;
+    }
+
     pub fn renderTarget(self: *GLState, texture: ?dvui.TextureTarget) void {
         c.glBindFramebuffer(c.GL_FRAMEBUFFER, 0);
         if (self.target_fbo != 0) c.glDeleteFramebuffers(1, &self.target_fbo);
@@ -193,9 +201,9 @@ pub const GLState = struct {
         self.target_size = .{ .w = @floatFromInt(t.width), .h = @floatFromInt(t.height) };
     }
 
-    pub fn drawClippedTriangles(self: *GLState, screen_width: u32, screen_height: u32, texture: ?dvui.Texture, vtx: []const dvui.Vertex, idx: []const u16, clipr: ?dvui.Rect.Physical) !void {
-        const width: u32 = if (self.target_size) |s| @intFromFloat(s.w) else screen_width;
-        const height: u32 = if (self.target_size) |s| @intFromFloat(s.h) else screen_height;
+    pub fn drawClippedTriangles(self: *GLState, texture: ?dvui.Texture, vtx: []const dvui.Vertex, idx: []const u16, clipr: ?dvui.Rect.Physical) !void {
+        const width: u32 = if (self.target_size) |s| @intFromFloat(s.w) else self.screen_width;
+        const height: u32 = if (self.target_size) |s| @intFromFloat(s.h) else self.screen_height;
         const flip: f32 = if (self.target_size != null) -1 else 1;
         c.glViewport(0, 0, @intCast(width), @intCast(height));
         c.glUseProgram(self.shader_program);

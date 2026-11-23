@@ -584,9 +584,9 @@ pub fn begin(self: *Core, arena: std.mem.Allocator) !void {
     }
     const gb = zpugl.gl.get_backend();
     if (!self.in_expose) _ = gb.enter(self.view, null);
-    self.gl.native.renderTarget(null);
+    self.gl.native.begin(w, h);
     zpugl.gl.resize(self.view);
-    c.glViewport(0, 0, @intFromFloat(self.size.w), @intFromFloat(self.size.h));
+    c.glViewport(0, 0, @intCast(w), @intCast(h));
     c.glClearColor(0.0, 0.6, 0.8, 1.0);
     c.glClear(c.GL_COLOR_BUFFER_BIT);
     c.glEnable(c.GL_BLEND);
@@ -672,7 +672,7 @@ pub fn contentScale(_: *Core) f32 {
 pub fn drawClippedTriangles(self: *Core, texture: ?dvui.Texture, vtx: []const dvui.Vertex, idx: []const u16, clipr: ?dvui.Rect.Physical) !void {
     switch (self.gl) {
         .vulkan => |r| try r.drawClippedTriangles(texture, vtx, idx, clipr),
-        .native => |*n| try n.drawClippedTriangles(@intFromFloat(self.size.w), @intFromFloat(self.size.h), texture, vtx, idx, clipr),
+        .native => |*n| try n.drawClippedTriangles(texture, vtx, idx, clipr),
     }
 }
 

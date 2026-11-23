@@ -93,6 +93,8 @@ pub const Renderer = struct {
     drawable: ?objc.Object = null,
     screen_cleared: bool = false,
     target: ?dvui.TextureTarget = null,
+    screen_w: u32 = 0,
+    screen_h: u32 = 0,
 
     pub fn init(_: std.mem.Allocator, view: *zpugl.View) !Renderer {
         const layer = obj(@ptrCast(@alignCast(view.getContext() orelse return error.NoMetalLayer)));
@@ -178,6 +180,8 @@ pub const Renderer = struct {
         self.pool = objc_autoreleasePoolPush();
         self.screen_cleared = false;
         self.target = null;
+        self.screen_w = w;
+        self.screen_h = h;
         self.frame = (self.frame + 1) % frames_in_flight;
         self.frames[self.frame].wait();
         self.buffer_used = 0;
@@ -273,11 +277,11 @@ pub const Renderer = struct {
         return s;
     }
 
-    pub fn drawClippedTriangles(self: *Renderer, screen_w: u32, screen_h: u32, texture: ?dvui.Texture, vtx: []const dvui.Vertex, idx: []const dvui.Vertex.Index, clipr: ?dvui.Rect.Physical) !void {
+    pub fn drawClippedTriangles(self: *Renderer, texture: ?dvui.Texture, vtx: []const dvui.Vertex, idx: []const dvui.Vertex.Index, clipr: ?dvui.Rect.Physical) !void {
         self.ensureEncoder();
         const enc = self.encoder orelse return;
-        const w: f32 = if (self.target) |t| @floatFromInt(t.width) else @floatFromInt(screen_w);
-        const h: f32 = if (self.target) |t| @floatFromInt(t.height) else @floatFromInt(screen_h);
+        const w: f32 = if (self.target) |t| @floatFromInt(t.width) else @floatFromInt(self.screen_w);
+        const h: f32 = if (self.target) |t| @floatFromInt(t.height) else @floatFromInt(self.screen_h);
 
         const vbuf, const voff = self.upload(std.mem.sliceAsBytes(vtx));
         enc.msgSend(void, "setVertexBuffer:offset:atIndex:", .{ vbuf, voff, @as(NSUInteger, 0) });
