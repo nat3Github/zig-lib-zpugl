@@ -192,7 +192,7 @@ pub extern fn zpugl_mac_set_min_size(native: usize, w: u32, h: u32) void;
 pub extern fn zpugl_mac_set_max_size(native: usize, w: u32, h: u32) void;
 pub extern fn zpugl_mac_set_title(native: usize, title: [*:0]const u8) void;
 pub extern fn zpugl_mac_get_scale_factor(native: usize) f64;
-pub extern fn zpugl_mac_grab_focus(native: usize) void;
+pub extern fn zpugl_mac_grab_focus(native: usize) bool;
 pub extern fn zpugl_mac_has_focus(native: usize) bool;
 pub extern fn zpugl_mac_set_cursor(native: usize, cursor: u32) void;
 pub extern fn zpugl_mac_obscure_view(native: usize) void;
@@ -305,8 +305,7 @@ pub fn obscureView(view: *root.View) root.Status {
 
 pub fn grabFocus(view: *root.View) root.Status {
     const native = @intFromPtr(view.handle orelse return .bad_call);
-    zpugl_mac_grab_focus(native);
-    return .success;
+    return if (zpugl_mac_grab_focus(native)) .success else .failure;
 }
 
 pub fn hasFocus(view: *root.View) bool {

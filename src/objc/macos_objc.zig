@@ -1176,8 +1176,10 @@ export fn zpugl_mac_get_scale_factor(native: usize) f64 {
     if (viewWindow(native)) |win| return win.msgSend(CGFloat, "backingScaleFactor", .{});
     return 1.0;
 }
-export fn zpugl_mac_grab_focus(native: usize) void {
+export fn zpugl_mac_grab_focus(native: usize) bool {
+    if (objFromId(@ptrFromInt(native)).msgSend(bool, "isHiddenOrHasHiddenAncestor", .{})) return false;
     focusView(@ptrFromInt(native));
+    return true;
 }
 export fn zpugl_mac_has_focus(native: usize) bool {
     const view: c.id = @ptrFromInt(native);
