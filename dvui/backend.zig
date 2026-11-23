@@ -66,7 +66,6 @@ events: std.ArrayList(dvui.Event) = .empty,
 text_queue: std.ArrayList(TextChunk) = .empty,
 key_num: ?u16 = null,
 key_handled: bool = false,
-keys_all_used: bool = false,
 allocator: std.mem.Allocator,
 mouse_x: f32 = 0,
 mouse_y: f32 = 0,
@@ -390,7 +389,7 @@ fn onEvent(view: *zpugl.View, event: *const zpugl.Event) zpugl.Status {
             if (self.in_frame) return .success;
             self.key_handled = false;
             r.f(r.ctx);
-            return if (self.key_handled or active or self.keys_all_used) .success else .failure;
+            return if (self.key_handled or active) .success else .failure;
         },
         .key_release => |ev| {
             self.events.append(self.allocator, .{ .evt = .{ .key = .{

@@ -864,7 +864,7 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
                     .keycode = xev.key.keycode,
                     .key = key,
                 } };
-                const used = common.dispatchEvent(view, &kev) == .success;
+                _ = common.dispatchEvent(view, &kev);
                 if (n > 0 and buf[0] >= 0x20 and buf[0] != 0x7F) {
                     var str8: [8]u8 = @splat(0);
                     @memcpy(str8[0..n], buf[0..n]);
@@ -890,7 +890,6 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
                     } };
                     _ = common.dispatchEvent(view, &tev);
                 }
-                passOn(view, impl, &xev.key, true, used);
             } else {
                 const kev = root.Event{ .key_release = .{
                     .time = t,
@@ -903,7 +902,6 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
                     .key = key,
                 } };
                 _ = common.dispatchEvent(view, &kev);
-                passOn(view, impl, &xev.key, false, false);
             }
         },
         ClientMessage_ev => {
@@ -1794,25 +1792,6 @@ pub fn obscureRegion(view: *root.View, x: i32, y: i32, w: u32, h: u32) root.Stat
     _ = XSendEvent(impl.display, win, 0, ExposureMask, &ev);
     _ = XFlush(impl.display);
     return .success;
-}
-
-// Unused key presses of an embedded view go to the host's window.
-// Packed as keycode, modifier state and time.
-var keys_passed_on: std.StaticBitSet(256) = .initEmpty();
-
-fn passOn(view: *root.View, impl: *WorldImpl, key: *const XKeyEvent_t, press: bool, used: bool) void {
-    const code: usize = key.keycode & 0xFF;
-    const passed = keys_passed_on.isSet(code);
-    keys_passed_on.unset(code);
-    if (view.parent == 0 or (if (press) used else !passed)) return;
-    if (press) keys_passed_on.set(code);
-    const parent: Window = @intCast(view.parent);
-    var ev: XEvent = .{ .key = key.* };
-    ev.key.window = parent;
-    ev.key.subwindow = 0;
-    ev.key.send_event = 1;
-    _ = XSendEvent(impl.display, parent, 1, if (press) KeyPressMask else KeyReleaseMask, &ev);
-    _ = XFlush(impl.display);
 }
 
 pub fn grabFocus(view: *root.View) root.Status {

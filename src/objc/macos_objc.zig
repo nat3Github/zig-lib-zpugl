@@ -61,7 +61,7 @@ extern fn zpugl_on_close(view_ptr: *anyopaque) void;
 extern fn zpugl_on_button(view_ptr: *anyopaque, press: bool, time: f64, x: f64, y: f64, button: u32, mods: u32) void;
 extern fn zpugl_on_motion(view_ptr: *anyopaque, time: f64, x: f64, y: f64, mods: u32) void;
 extern fn zpugl_on_scroll(view_ptr: *anyopaque, time: f64, x: f64, y: f64, dx: f64, dy: f64, mods: u32) void;
-extern fn zpugl_on_key(view_ptr: *anyopaque, press: bool, time: f64, x: f64, y: f64, keycode: u32, key: u32, mods: u32) bool;
+extern fn zpugl_on_key(view_ptr: *anyopaque, press: bool, time: f64, x: f64, y: f64, keycode: u32, key: u32, mods: u32) void;
 extern fn zpugl_on_text(view_ptr: *anyopaque, time: f64, x: f64, y: f64, keycode: u32, character: u32, str: [*:0]const u8, mods: u32) void;
 extern fn zpugl_on_focus(view_ptr: *anyopaque, gained: bool, mode: u32) void;
 extern fn zpugl_on_pointer_cross(view_ptr: *anyopaque, entered: bool, time: f64, x: f64, y: f64, mods: u32, mode: u32) void;
@@ -353,20 +353,6 @@ fn keyFromEvent(ev: objc.Object) struct { key: u32, ch: u32, has_text: bool, utf
     return .{ .key = k, .ch = ch, .has_text = has_text, .utf8 = utf8 };
 }
 
-var keys_passed_on: u128 = 0;
-
-fn passOn(self: c.id, ev: objc.Object, comptime sel: [:0]const u8, press: bool, used: bool) void {
-    const bit = std.math.shl(u128, 1, ev.msgSend(u16, "keyCode", .{}));
-    const passed = keys_passed_on & bit != 0;
-    keys_passed_on &= ~bit;
-    if (press and used) return;
-    if (!press and !passed) return;
-    const next = objFromId(objFromId(self).msgSend(c.id, "nextResponder", .{}) orelse return);
-    if (next.msgSend(bool, "isKindOfClass:", .{nsClass("NSWindow").value})) return;
-    if (press) keys_passed_on |= bit;
-    next.msgSend(void, sel, .{ev});
-}
-
 fn impKeyDown(self: c.id, _: c.SEL, event: c.id) callconv(.c) void {
     const ev = objFromId(event);
     const time = ev.msgSend(NSTimeInterval, "timestamp", .{});
@@ -374,15 +360,13 @@ fn impKeyDown(self: c.id, _: c.SEL, event: c.id) callconv(.c) void {
     const keycode = ev.msgSend(u16, "keyCode", .{});
     const k = keyFromEvent(ev);
     const zp = ivarPtr(self) orelse return;
-    const used = zpugl_on_key(zp, true, time, 0, 0, keycode, k.key, modsFromFlags(flags));
+    zpugl_on_key(zp, true, time, 0, 0, keycode, k.key, modsFromFlags(flags));
     const ctx_id = c.object_getIvar(self, c.object_getInstanceVariable(self, "textInputContext", null));
     if (ctx_id != null) {
-        passOn(self, ev, "keyDown:", true, true);
         _ = (objc.Object{ .value = ctx_id }).msgSend(bool, "handleEvent:", .{ev});
         return;
     }
     if (k.has_text) zpugl_on_text(zp, time, 0, 0, keycode, k.ch, k.utf8, modsFromFlags(flags));
-    passOn(self, ev, "keyDown:", true, used);
 }
 
 fn impKeyUp(self: c.id, _: c.SEL, event: c.id) callconv(.c) void {
@@ -391,8 +375,7 @@ fn impKeyUp(self: c.id, _: c.SEL, event: c.id) callconv(.c) void {
     const flags = ev.msgSend(NSUInteger, "modifierFlags", .{});
     const keycode = ev.msgSend(u16, "keyCode", .{});
     const k = keyFromEvent(ev);
-    if (ivarPtr(self)) |zp| _ = zpugl_on_key(zp, false, time, 0, 0, keycode, k.key, modsFromFlags(flags));
-    passOn(self, ev, "keyUp:", false, false);
+    if (ivarPtr(self)) |zp| zpugl_on_key(zp, false, time, 0, 0, keycode, k.key, modsFromFlags(flags));
 }
 
 fn impFlagsChanged(self: c.id, _: c.SEL, event: c.id) callconv(.c) void {
@@ -409,12 +392,11 @@ fn impFlagsChanged(self: c.id, _: c.SEL, event: c.id) callconv(.c) void {
         0x37 => .{ NSEventModifierFlagCommand, 0xE057 },
         0x36 => .{ NSEventModifierFlagCommand, 0xE058 },
         0x39 => .{ NSEventModifierFlagCapsLock, 0xE047 },
-        else => return passOn(self, ev, "flagsChanged:", true, false),
+        else => return,
     };
     const press = flags & mask != 0;
     const zp = ivarPtr(self) orelse return;
-    const used = zpugl_on_key(zp, press, ev.msgSend(NSTimeInterval, "timestamp", .{}), 0, 0, keycode, key, modsFromFlags(flags));
-    passOn(self, ev, "flagsChanged:", press, used or textInputActive(self));
+    zpugl_on_key(zp, press, ev.msgSend(NSTimeInterval, "timestamp", .{}), 0, 0, keycode, key, modsFromFlags(flags));
 }
 
 fn impAcceptsFirstMouse(_: c.id, _: c.SEL, _: c.id) callconv(.c) bool {
@@ -742,8 +724,8 @@ fn impInsertText(self: c.id, _: c.SEL, string: c.id, _: NSRange) callconv(.c) vo
 fn editKey(self: c.id, key: u32, keycode: u32) void {
     const p = ivarPtr(self) orelse return;
     const cmd: u32 = 1 << 3;
-    _ = zpugl_on_key(p, true, 0, 0, 0, keycode, key, cmd);
-    _ = zpugl_on_key(p, false, 0, 0, 0, keycode, key, cmd);
+    zpugl_on_key(p, true, 0, 0, 0, keycode, key, cmd);
+    zpugl_on_key(p, false, 0, 0, 0, keycode, key, cmd);
 }
 fn impCut(self: c.id, _: c.SEL, _: c.id) callconv(.c) void {
     editKey(self, 'x', 7);

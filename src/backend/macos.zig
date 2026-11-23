@@ -73,14 +73,14 @@ export fn zpugl_on_scroll(view_ptr: *anyopaque, time: f64, x: f64, y: f64, dx: f
     _ = common.dispatchEvent(view, &ev);
 }
 
-export fn zpugl_on_key(view_ptr: *anyopaque, press: bool, time: f64, x: f64, y: f64, keycode: u32, key: u32, mods: u32) bool {
+export fn zpugl_on_key(view_ptr: *anyopaque, press: bool, time: f64, x: f64, y: f64, keycode: u32, key: u32, mods: u32) void {
     const view: *root.View = @ptrCast(@alignCast(view_ptr));
     const state: root.Mods = @bitCast(mods);
     const ev = if (press)
         root.Event{ .key_press = .{ .time = time, .x = x, .y = y, .root_x = x, .root_y = y, .state = state, .keycode = keycode, .key = key } }
     else
         root.Event{ .key_release = .{ .time = time, .x = x, .y = y, .root_x = x, .root_y = y, .state = state, .keycode = keycode, .key = key } };
-    return common.dispatchEvent(view, &ev) == .success;
+    _ = common.dispatchEvent(view, &ev);
 }
 
 export fn zpugl_on_text(view_ptr: *anyopaque, time: f64, x: f64, y: f64, keycode: u32, character: u32, str: [*:0]const u8, mods: u32) void {
