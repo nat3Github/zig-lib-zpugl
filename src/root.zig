@@ -980,3 +980,113 @@ pub const common = struct {
         return dispatchEvent(view, &event);
     }
 };
+
+fn testEvent(view: *View, event: *const Event) Status {
+    const count: *u32 = @ptrCast(@alignCast(view.getHandle() orelse return .success));
+    _ = event;
+    count.* += 1;
+    return .success;
+}
+
+test "world and view accessors" {
+    const world = try World.init(std.testing.allocator, .program, .{});
+    defer world.deinit();
+    var tag: u32 = 0;
+    world.setHandle(&tag);
+    try std.testing.expectEqual(@as(?*anyopaque, &tag), world.getHandle());
+    try std.testing.expectEqualStrings("", world.getString(.class_name));
+    try std.testing.expectEqual(Status.success, world.setString(.class_name, "zpugl"));
+    try std.testing.expectEqualStrings("zpugl", world.getString(.class_name));
+    try std.testing.expect(world.getTime() >= 0);
+
+    const view = try View.init(world, testEvent);
+    defer view.deinit();
+    try std.testing.expectEqual(@as(?*anyopaque, null), view.getHandle());
+    view.setHandle(&tag);
+    try std.testing.expectEqual(@as(?*anyopaque, &tag), view.getHandle());
+    for (std.enums.values(ViewHint)) |hint| try std.testing.expectEqual(hint_dont_care, view.getHint(hint));
+    try std.testing.expectEqual(Status.success, view.setHint(.samples, 4));
+    try std.testing.expectEqual(@as(i32, 4), view.getHint(.samples));
+    try std.testing.expectEqual(@as(NativeView, 0), view.getParent());
+    view.setParent(42);
+    try std.testing.expectEqual(@as(NativeView, 42), view.getParent());
+    try std.testing.expectEqual(Status.failure, view.setTransientParent(7));
+    view.setParent(0);
+    try std.testing.expectEqual(Status.success, view.setTransientParent(7));
+    try std.testing.expectEqual(@as(NativeView, 7), view.getTransientParent());
+    try std.testing.expectEqual(Status.success, view.setViewString(.window_title, "title"));
+    try std.testing.expectEqualStrings("title", view.getViewString(.window_title));
+    try std.testing.expect(!view.getVisible());
+    try std.testing.expectEqual(@as(NativeView, 0), view.getNativeView());
+    try std.testing.expectEqual(@as(?*anyopaque, null), view.getContext());
+    try std.testing.expectEqual(@as(f64, 1.0), view.getScaleFactor());
+    try std.testing.expectEqual(ViewStyleFlags{}, view.getViewStyle());
+    try std.testing.expectEqual(@as(?Point, null), view.getWindowPosition());
+    try std.testing.expectEqual(@as(u32, 0), tag);
+}
+
+test "position and size are clamped" {
+    const world = try World.init(std.testing.allocator, .program, .{});
+    defer world.deinit();
+    const view = try View.init(world, testEvent);
+    defer view.deinit();
+    try std.testing.expectEqual(Point{ .x = std.math.minInt(i16), .y = std.math.minInt(i16) }, view.getPositionHint(.default_position));
+    try std.testing.expectEqual(Status.success, view.setPositionHint(.default_position, 100000, -100000));
+    try std.testing.expectEqual(Point{ .x = std.math.maxInt(i16), .y = std.math.minInt(i16) }, view.getPositionHint(.default_position));
+    try std.testing.expectEqual(Status.success, view.setSizeHint(.min_size, 1 << 20, 7));
+    try std.testing.expectEqual(Area{ .width = std.math.maxInt(u16), .height = 7 }, view.getSizeHint(.min_size));
+    _ = view.setSize(1 << 20, 1 << 17);
+    try std.testing.expectEqual(Area{ .width = std.math.maxInt(u16), .height = std.math.maxInt(u16) }, view.getSizeHint(.default_size));
+}
+
+test "unrealized views return bad_call" {
+    const world = try World.init(std.testing.allocator, .program, .{});
+    defer world.deinit();
+    const view = try View.init(world, testEvent);
+    defer view.deinit();
+    const offer: DataOfferEvent = .{ .time = 0, .x = 0, .y = 0, .clipboard = .general };
+    const rect: TextInputRect = .{ .x = 0, .y = 0, .width = 1, .height = 1 };
+    const results = [_]Status{
+        view.show(.passive),
+        view.hide(),
+        view.setSize(10, 10),
+        view.setPosition(1, 1),
+        view.setViewStyle(.{}),
+        view.obscureView(),
+        view.obscureRegion(0, 0, 1, 1),
+        view.grabFocus(),
+        view.setCursor(.hand),
+        view.startTimer(1, 0.01),
+        view.stopTimer(1),
+        view.startTextInput(rect),
+        view.stopTextInput(),
+        view.setTextInputRect(rect),
+        view.sendEvent(&.{ .client = .{ .data1 = 1, .data2 = 2 } }),
+        view.registerDropType("text/plain"),
+        view.paste(),
+        view.setClipboard(.general, "text/plain", "x"),
+        view.rejectOffer(&offer, 0, 0, 0, 0),
+    };
+    for (results) |s| try std.testing.expectEqual(Status.bad_call, s);
+    try std.testing.expect(!view.hasFocus());
+}
+
+test "unrealize without realize" {
+    const world = try World.init(std.testing.allocator, .program, .{});
+    defer world.deinit();
+    const view = try View.init(world, testEvent);
+    defer view.deinit();
+    var events: u32 = 0;
+    view.setHandle(&events);
+    try std.testing.expectError(error.NotRealized, view.unrealize());
+    try std.testing.expectEqual(@as(u32, 0), events);
+}
+
+test "free a never realized gl view" {
+    const world = try World.init(std.testing.allocator, .program, .{});
+    defer world.deinit();
+    const view = try View.init(world, testEvent);
+    view.setBackend(.gl);
+    try std.testing.expectEqual(@as(?*anyopaque, null), view.getContext());
+    view.deinit();
+}

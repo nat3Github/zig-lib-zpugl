@@ -80,6 +80,9 @@ pub fn build(b: *std.Build) !void {
     const triangle_step = b.step("run-triangle", "Run the zpugl triangle test");
     triangle_step.dependOn(&run_triangle.step);
 
+    const tests = b.addTest(.{ .root_module = zpugl_mod });
+    b.step("test", "Run the zpugl tests").dependOn(&b.addRunArtifact(tests).step);
+
     // check-cross: compile-only check for all supported target triples.
     // Linux/Windows ABI types are declared inline in x11.zig/win32.zig so no
     // sysroot or C headers are needed — we build as a static lib (no link step).
