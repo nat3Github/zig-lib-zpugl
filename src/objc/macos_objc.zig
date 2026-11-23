@@ -1052,6 +1052,7 @@ export fn zpugl_mac_destroy_view(native: usize) void {
     if (native == 0) return;
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     if (ivarPtr(view.value)) |p| stopViewTimers(@intFromPtr(p));
+    zpugl_mac_stop_text_input(native);
     const win_id = view.msgSend(c.id, "window", .{});
     var owned_window: ?objc.Object = null;
     if (win_id) |w| {
@@ -1383,6 +1384,7 @@ export fn zpugl_mac_start_timer(zig_view: *anyopaque, timer_id: usize, freq: f64
         @as(c.id, null),
         true,
     });
+    tgt.release();
     const mode = nsClass("NSString").msgSend(objc.Object, "stringWithUTF8String:", .{@as([*:0]const u8, "kCFRunLoopCommonModes")});
     nsClass("NSRunLoop").msgSend(objc.Object, "currentRunLoop", .{}).msgSend(void, "addTimer:forMode:", .{ t, mode });
 
@@ -1847,7 +1849,6 @@ export fn zpugl_mac_start_text_input(native: usize, x: i32, y: i32, w: u32, h: u
         const NSTextInputContext = nsClass("NSTextInputContext");
         const new_ctx = NSTextInputContext.msgSend(objc.Object, "alloc", .{})
             .msgSend(objc.Object, "initWithClient:", .{view});
-        _ = new_ctx.retain();
         c.object_setIvar(@ptrFromInt(native), ctx_ivar, new_ctx.value);
         break :blk new_ctx;
     };
