@@ -978,7 +978,7 @@ export fn zpugl_mac_create_view(
         .origin = .{ .x = x, .y = y },
         .size = .{ .width = w, .height = h },
     }});
-    setIvarPtr(view.value, view_ptr);
+    _ = view_ptr;
     if (metal) {
         view.msgSend(void, "setWantsLayer:", .{true});
         view.msgSend(void, "setLayerContentsRedrawPolicy:", .{NSViewLayerContentsRedrawOnSetNeedsDisplay});
@@ -1026,6 +1026,13 @@ export fn zpugl_mac_create_view(
     return @intFromPtr(view.value);
 }
 
+export fn zpugl_mac_realized(native: usize, view_ptr: *anyopaque) void {
+    const view = objFromId(@ptrFromInt(native));
+    setIvarPtr(view.value, view_ptr);
+    const frame = view.msgSend(NSRect, "frame", .{});
+    zpugl_on_configure(view_ptr, @intFromFloat(frame.origin.x), @intFromFloat(frame.origin.y), @intFromFloat(frame.size.width), @intFromFloat(frame.size.height));
+}
+
 export fn zpugl_mac_destroy_view(native: usize) void {
     if (native == 0) return;
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
@@ -1049,7 +1056,7 @@ export fn zpugl_mac_destroy_view(native: usize) void {
 }
 
 export fn zpugl_mac_set_dark_frame(native: usize, dark: bool) void {
-    if (viewWindow(native)) |win| {
+    if (ownWindow(native)) |win| {
         if (dark) {
             const ns_str = nsClass("NSString").msgSend(objc.Object, "stringWithUTF8String:", .{@as([*:0]const u8, "NSAppearanceNameDarkAqua")});
             const appearance = nsClass("NSAppearance").msgSend(objc.Object, "appearanceNamed:", .{ns_str});
@@ -1064,8 +1071,8 @@ export fn zpugl_mac_set_dark_frame(native: usize, dark: bool) void {
 
 export fn zpugl_mac_show_view(native: usize, command: u32) void {
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
-    const win_id = view.msgSend(c.id, "window", .{}) orelse return;
-    const win: objc.Object = .{ .value = win_id };
+    view.msgSend(void, "setNeedsDisplay:", .{true});
+    const win = ownWindow(native) orelse return view.msgSend(void, "setHidden:", .{false});
     switch (command) {
         2 => {
             nsApp().msgSend(void, "activateIgnoringOtherApps:", .{true});
@@ -1077,16 +1084,19 @@ export fn zpugl_mac_show_view(native: usize, command: u32) void {
 }
 
 export fn zpugl_mac_hide_view(native: usize) void {
-    const view: objc.Object = .{ .value = @ptrFromInt(native) };
-    if (view.msgSend(c.id, "window", .{})) |w| {
-        (objc.Object{ .value = w }).msgSend(void, "orderOut:", .{@as(c.id, null)});
-    }
+    const win = ownWindow(native) orelse return objFromId(@ptrFromInt(native)).msgSend(void, "setHidden:", .{true});
+    win.msgSend(void, "orderOut:", .{@as(c.id, null)});
 }
 
 inline fn viewWindow(native: usize) ?objc.Object {
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     const w = view.msgSend(c.id, "window", .{}) orelse return null;
     return .{ .value = w };
+}
+
+fn ownWindow(native: usize) ?objc.Object {
+    const win = viewWindow(native) orelse return null;
+    return if (win.msgSend(c.id, "contentView", .{}) == @as(c.id, @ptrFromInt(native))) win else null;
 }
 
 fn primaryScreenHeight() CGFloat {
@@ -1139,6 +1149,11 @@ export fn zpugl_mac_set_size(native: usize, w: u32, h: u32) void {
 // top-left coordinates; macOS NSViews are bottom-left unless flipped, so the
 // y is converted when the superview is not flipped.
 export fn zpugl_mac_set_view_position(native: usize, x: i32, y: i32) void {
+    if (ownWindow(native)) |win| {
+        const f = win.msgSend(NSRect, "frame", .{});
+        win.msgSend(void, "setFrameOrigin:", .{NSPoint{ .x = @floatFromInt(x), .y = primaryScreenHeight() - @as(CGFloat, @floatFromInt(y)) - f.size.height }});
+        return;
+    }
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     const sv_id = view.msgSend(c.id, "superview", .{}) orelse return;
     const superview: objc.Object = .{ .value = sv_id };
@@ -1151,17 +1166,17 @@ export fn zpugl_mac_set_view_position(native: usize, x: i32, y: i32) void {
     view.msgSend(void, "setFrameOrigin:", .{NSPoint{ .x = @floatFromInt(x), .y = oy }});
 }
 export fn zpugl_mac_set_min_size(native: usize, w: u32, h: u32) void {
-    if (viewWindow(native)) |win| {
+    if (ownWindow(native)) |win| {
         win.msgSend(void, "setContentMinSize:", .{NSSize{ .width = @floatFromInt(w), .height = @floatFromInt(h) }});
     }
 }
 export fn zpugl_mac_set_max_size(native: usize, w: u32, h: u32) void {
-    if (viewWindow(native)) |win| {
+    if (ownWindow(native)) |win| {
         win.msgSend(void, "setContentMaxSize:", .{NSSize{ .width = @floatFromInt(w), .height = @floatFromInt(h) }});
     }
 }
 export fn zpugl_mac_set_title(native: usize, title: [*:0]const u8) void {
-    if (viewWindow(native)) |win| {
+    if (ownWindow(native)) |win| {
         const s = nsClass("NSString").msgSend(objc.Object, "stringWithUTF8String:", .{title});
         win.msgSend(void, "setTitle:", .{s});
     }
@@ -1225,12 +1240,10 @@ export fn zpugl_mac_obscure_region(native: usize, x: f64, y: f64, w: f64, h: f64
 
 export fn zpugl_mac_set_transient_parent(child_native: usize, parent_native: usize) u32 {
     if (child_native == 0 or parent_native == 0) return 1;
-    const child_view: objc.Object = .{ .value = @ptrFromInt(child_native) };
-    const parent_view: objc.Object = .{ .value = @ptrFromInt(parent_native) };
-    const child_win_id = child_view.msgSend(c.id, "window", .{}) orelse return 1;
-    const parent_win_id = parent_view.msgSend(c.id, "window", .{}) orelse return 1;
-    const parent_win: objc.Object = .{ .value = parent_win_id };
-    parent_win.msgSend(void, "addChildWindow:ordered:", .{ (objc.Object{ .value = child_win_id }), @as(NSInteger, 1) });
+    const child_win = ownWindow(child_native) orelse return 1;
+    const parent_win = viewWindow(parent_native) orelse return 1;
+    if (parent_win.value == child_win.value) return 1;
+    parent_win.msgSend(void, "addChildWindow:ordered:", .{ child_win, @as(NSInteger, 1) });
     return 0;
 }
 
@@ -1294,7 +1307,7 @@ export fn zpugl_mac_get_time() f64 {
 }
 
 export fn zpugl_mac_set_view_style(native: usize, flags: u32) void {
-    const win = viewWindow(native) orelse return;
+    const win = ownWindow(native) orelse return;
     const f: ViewStyleFlags = @bitCast(flags);
     var mask = win.msgSend(NSUInteger, "styleMask", .{});
     if (f.resizing) mask |= NSWindowStyleMaskResizable else mask &= ~NSWindowStyleMaskResizable;
@@ -1310,7 +1323,7 @@ export fn zpugl_mac_set_view_style(native: usize, flags: u32) void {
 
 export fn zpugl_mac_send_close(native: usize) u32 {
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
-    if (viewWindow(native)) |win| {
+    if (ownWindow(native)) |win| {
         win.msgSend(void, "performClose:", .{@as(c.id, null)});
     } else {
         if (ivarPtr(view.value)) |p| zpugl_on_close(p);

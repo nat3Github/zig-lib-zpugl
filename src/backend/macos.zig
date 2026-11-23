@@ -182,6 +182,7 @@ pub extern fn zpugl_mac_create_view(
 ) usize;
 
 pub extern fn zpugl_mac_destroy_view(native: usize) void;
+pub extern fn zpugl_mac_realized(native: usize, view: *anyopaque) void;
 pub extern fn zpugl_mac_show_view(native: usize, command: u32) void; // command = ShowCommand value
 pub extern fn zpugl_mac_hide_view(native: usize) void;
 pub extern fn zpugl_mac_set_size(native: usize, w: u32, h: u32) void;
@@ -251,6 +252,10 @@ pub fn createView(view: *root.View) root.Status {
     return .success;
 }
 
+pub fn realized(view: *root.View) void {
+    zpugl_mac_realized(@intFromPtr(view.handle.?), view);
+}
+
 pub fn destroyView(view: *root.View) void {
     if (view.handle) |h| {
         zpugl_mac_destroy_view(@intFromPtr(h));
@@ -262,6 +267,7 @@ pub fn showView(view: *root.View, command: root.ShowCommand) root.Status {
     const native = @intFromPtr(view.handle orelse return .bad_call);
     zpugl_mac_show_view(native, @backingInt(command));
     view.visible = true;
+    if (view.transient_parent != 0) _ = zpugl_mac_set_transient_parent(native, view.transient_parent);
     return .success;
 }
 
@@ -376,7 +382,7 @@ pub fn obscureRegion(view: *root.View, x: i32, y: i32, w: u32, h: u32) root.Stat
 }
 
 pub fn setTransientParent(view: *root.View, parent: root.NativeView) root.Status {
-    if (view.handle == null or parent == 0) return .success;
+    if (parent == 0 or !view.visible) return .success;
     const child_native = @intFromPtr(view.handle.?);
     const r = zpugl_mac_set_transient_parent(child_native, parent);
     return if (r == 0) .success else .failure;
@@ -388,7 +394,7 @@ pub fn sendEvent(view: *root.View, event: *const root.Event) root.Status {
             const r = zpugl_mac_send_close(native);
             return if (r == 0) .success else .failure;
         },
-        .client => |cl| return if (zpugl_mac_send_client(native, cl.data1, cl.data2) == 0) .success else .failure,
+        .client => |cl| return if (view.world.type == .module or view.parent != 0) .unsupported else if (zpugl_mac_send_client(native, cl.data1, cl.data2) == 0) .success else .failure,
         else => return .unsupported,
     }
 }
