@@ -556,9 +556,9 @@ pub const World = struct {
         return backend.stopTimer(self, view, id);
     }
 
-    pub fn watchFile(self: *World, fd: i32, callback: ?*anyopaque, user_data: ?*anyopaque) Status {
+    pub fn watchFile(self: *World, fd: i32, user_data: ?*anyopaque, callback: *const fn (fd: c_int, user_data: ?*anyopaque) void) Status {
         if (@hasDecl(backend, "watchFD")) {
-            return backend.watchFD(self, fd, callback, user_data);
+            return backend.watchFD(self, fd, user_data, callback);
         }
         return .unsupported;
     }
@@ -658,7 +658,9 @@ pub const View = struct {
     }
 
     pub fn setTransientParent(self: *View, parent: NativeView) Status {
+        if (self.parent != 0) return .failure;
         self.transient_parent = parent;
+        if (self.handle == null) return .success;
         if (@hasDecl(backend, "setTransientParent")) {
             return backend.setTransientParent(self, parent);
         }
@@ -670,8 +672,13 @@ pub const View = struct {
     }
 
     pub fn realize(self: *View) !void {
+        if (self.handle != null) return error.AlreadyRealized;
         const s = backend.createView(self);
         if (s != .success) return error.RealizeFailed;
+        errdefer {
+            backend.destroyView(self);
+            self.handle = null;
+        }
 
         switch (self.graphics_backend) {
             .gl => {
@@ -691,9 +698,11 @@ pub const View = struct {
 
         try self.world.view_map.put(self.world.allocator, @intFromPtr(self.handle.?), self);
         _ = common.dispatchSimpleEvent(self, .realize);
+        if (@hasDecl(backend, "realized")) backend.realized(self);
     }
 
     pub fn unrealize(self: *View) !void {
+        if (self.handle == null) return error.NotRealized;
         _ = common.dispatchSimpleEvent(self, .unrealize);
         if (self.handle) |h| {
             _ = self.world.view_map.remove(@intFromPtr(h));
@@ -707,17 +716,19 @@ pub const View = struct {
     }
 
     pub fn show(self: *View, command: ShowCommand) Status {
+        if (self.handle == null) return .bad_call;
         return backend.showView(self, command);
     }
 
     pub fn hide(self: *View) Status {
+        if (self.handle == null) return .bad_call;
         return backend.hideView(self);
     }
 
     pub fn setSize(self: *View, width: u32, height: u32) Status {
         self.size_hints[@backingInt(SizeHint.default_size)] = .{
-            .width = @intCast(width),
-            .height = @intCast(height),
+            .width = @intCast(@min(width, std.math.maxInt(u16))),
+            .height = @intCast(@min(height, std.math.maxInt(u16))),
         };
         return backend.setViewSize(self, width, height);
     }
@@ -725,6 +736,7 @@ pub const View = struct {
     /// Move a realized view to (x, y) within its parent. For embedded child
     /// views; top-left coordinates.
     pub fn setPosition(self: *View, x: i32, y: i32) Status {
+        if (self.handle == null) return .bad_call;
         return backend.setViewPosition(self, x, y);
     }
 
@@ -776,6 +788,7 @@ pub const View = struct {
     }
 
     pub fn setViewStyle(self: *View, flags: ViewStyleFlags) Status {
+        if (self.handle == null) return .bad_call;
         return backend.setViewStyle(self, flags);
     }
 
@@ -801,14 +814,17 @@ pub const View = struct {
     }
 
     pub fn obscureView(self: *View) Status {
+        if (self.handle == null) return .bad_call;
         return backend.obscureView(self);
     }
 
     pub fn obscureRegion(self: *View, x: i32, y: i32, width: u32, height: u32) Status {
+        if (self.handle == null) return .bad_call;
         return backend.obscureRegion(self, x, y, width, height);
     }
 
     pub fn grabFocus(self: *View) Status {
+        if (self.handle == null) return .bad_call;
         return backend.grabFocus(self);
     }
 
@@ -817,26 +833,32 @@ pub const View = struct {
     }
 
     pub fn setCursor(self: *View, cursor: Cursor) Status {
+        if (self.handle == null) return .bad_call;
         return backend.setCursor(self, cursor);
     }
 
     pub fn startTimer(self: *View, id: usize, timeout: f64) Status {
+        if (self.handle == null) return .bad_call;
         return self.world.startTimer(self, id, timeout);
     }
 
     pub fn stopTimer(self: *View, id: usize) Status {
+        if (self.handle == null) return .bad_call;
         return self.world.stopTimer(self, id);
     }
 
     pub fn startTextInput(self: *View, rect: TextInputRect) Status {
+        if (self.handle == null) return .bad_call;
         return backend.startTextInput(self, rect);
     }
 
     pub fn stopTextInput(self: *View) Status {
+        if (self.handle == null) return .bad_call;
         return backend.stopTextInput(self);
     }
 
     pub fn setTextInputRect(self: *View, rect: TextInputRect) Status {
+        if (self.handle == null) return .bad_call;
         return backend.setTextInputRect(self, rect);
     }
 
@@ -846,10 +868,12 @@ pub const View = struct {
     }
 
     pub fn sendEvent(self: *View, event: *const Event) Status {
+        if (self.handle == null) return .bad_call;
         return backend.sendEvent(self, event);
     }
 
     pub fn registerDropType(self: *View, mime_type: []const u8) Status {
+        if (self.handle == null) return .bad_call;
         if (@hasDecl(backend, "registerDropType")) {
             return backend.registerDropType(self, mime_type);
         }
@@ -857,6 +881,7 @@ pub const View = struct {
     }
 
     pub fn paste(self: *View) Status {
+        if (self.handle == null) return .bad_call;
         return backend.paste(self);
     }
 
@@ -892,6 +917,7 @@ pub const View = struct {
         region_width: u32,
         region_height: u32,
     ) Status {
+        if (self.handle == null) return .bad_call;
         return backend.rejectOffer(self, offer, region_x, region_y, region_width, region_height);
     }
 
@@ -901,6 +927,7 @@ pub const View = struct {
         mime_type: []const u8,
         data: []const u8,
     ) Status {
+        if (self.handle == null) return .bad_call;
         return backend.setClipboard(self, clipboard, mime_type, data);
     }
 
