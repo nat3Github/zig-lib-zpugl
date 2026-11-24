@@ -39,9 +39,10 @@ const PendingClient = struct { view: ?*root.View, data1: usize, data2: usize };
 
 var view_class: ?objc.Class = null;
 var container_class: ?objc.Class = null;
+var controller_class: ?objc.Class = null;
 var app_delegate_class: ?objc.Class = null;
 var scene_delegate_class: ?objc.Class = null;
-var name_bufs: [4][64]u8 = undefined;
+var name_bufs: [5][64]u8 = undefined;
 
 fn dylibSuffix() u64 {
     var info: std.c.dl_info = undefined;
@@ -112,6 +113,32 @@ fn impContainerLayoutSubviews(self: c.id, _: c.SEL) callconv(.c) void {
             .size = .{ .width = b.size.width - in.left - in.right, .height = b.size.height - in.top - in.bottom },
         }});
     }
+}
+
+fn setIvar(self: c.id, name: [:0]const u8, value: c.id) void {
+    c.object_setIvar(self, c.object_getInstanceVariable(self, name, null), value);
+}
+
+fn getIvar(self: c.id, name: [:0]const u8) c.id {
+    return c.object_getIvar(self, c.object_getInstanceVariable(self, name, null));
+}
+
+fn impViewWillAppear(self: c.id, _: c.SEL, animated: bool) callconv(.c) void {
+    obj(self).msgSendSuper(cls("UIViewController"), void, "viewWillAppear:", .{animated});
+    setIvar(self, "appearing", self);
+}
+
+fn impViewDidAppear(self: c.id, _: c.SEL, animated: bool) callconv(.c) void {
+    obj(self).msgSendSuper(cls("UIViewController"), void, "viewDidAppear:", .{animated});
+    setIvar(self, "appearing", null);
+    const window = obj(getIvar(self, "closeWindow") orelse return);
+    setIvar(self, "closeWindow", null);
+    closeWindow(window);
+}
+
+fn closeWindow(window: objc.Object) void {
+    window.msgSend(void, "setHidden:", .{true});
+    window.release();
 }
 
 fn impSetNeedsLayout(self: c.id, _: c.SEL) callconv(.c) void {
@@ -269,6 +296,14 @@ fn registerClasses() void {
     objc.registerClassPair(ct);
     container_class = ct;
 
+    const vc = subclass(4, "UIViewController", "ZpuglViewController");
+    _ = vc.addIvar("appearing");
+    _ = vc.addIvar("closeWindow");
+    std.debug.assert(vc.addMethod("viewWillAppear:", impViewWillAppear));
+    std.debug.assert(vc.addMethod("viewDidAppear:", impViewDidAppear));
+    objc.registerClassPair(vc);
+    controller_class = vc;
+
     const sd = subclass(2, "UIResponder", "ZpuglSceneDelegate");
     std.debug.assert(sd.addMethod("scene:willConnectToSession:options:", impSceneWillConnect));
     std.debug.assert(sd.addMethod("sceneDidEnterBackground:", impSceneBackground));
@@ -314,10 +349,10 @@ pub fn createView(view: *root.View) root.Status {
             .msgSend(objc.Object, "initWithFrame:", .{window.msgSend(CGRect, "bounds", .{})});
         container.msgSend(void, "setBackgroundColor:", .{cls("UIColor").msgSend(objc.Object, "blackColor", .{})});
         container.msgSend(void, "addSubview:", .{uiview});
-        const vc = cls("UIViewController").msgSend(objc.Object, "alloc", .{}).msgSend(objc.Object, "init", .{});
+        const vc = controller_class.?.msgSend(objc.Object, "alloc", .{}).msgSend(objc.Object, "init", .{});
         vc.msgSend(void, "setView:", .{container});
         window.msgSend(void, "setRootViewController:", .{vc});
-        c.object_setIvar(uiview.value, c.object_getInstanceVariable(uiview.value, "ownedWindow", null), window.value);
+        setIvar(uiview.value, "ownedWindow", window.value);
         container.release();
         vc.release();
     }
@@ -332,7 +367,7 @@ fn uiView(view: *root.View) ?objc.Object {
 
 fn ownedWindow(view: *root.View) ?objc.Object {
     const v = uiView(view) orelse return null;
-    return obj(c.object_getIvar(v.value, c.object_getInstanceVariable(v.value, "ownedWindow", null)) orelse return null);
+    return obj(getIvar(v.value, "ownedWindow") orelse return null);
 }
 
 pub fn destroyView(view: *root.View) void {
@@ -345,8 +380,8 @@ pub fn destroyView(view: *root.View) void {
     v.msgSend(void, "removeFromSuperview", .{});
     v.release();
     if (window) |w| {
-        w.msgSend(void, "setHidden:", .{true});
-        w.release();
+        const vc = w.msgSend(objc.Object, "rootViewController", .{});
+        if (getIvar(vc.value, "appearing") != null) setIvar(vc.value, "closeWindow", w.value) else closeWindow(w);
     }
     view.handle = null;
 }
