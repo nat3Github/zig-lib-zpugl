@@ -22,7 +22,7 @@ pub const surface_lost: Result = -1000000000;
 pub const pool_out_of_memory: Result = -1000069000;
 pub const pool_fragmented: Result = -12;
 
-pub const api_1_2: u32 = (1 << 22) | (2 << 12);
+pub const api_1_0: u32 = 1 << 22;
 pub const format_rgba8: i32 = 37;
 pub const format_bgra8: i32 = 44;
 pub const layout_undefined: i32 = 0;

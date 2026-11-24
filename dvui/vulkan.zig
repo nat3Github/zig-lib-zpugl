@@ -51,7 +51,7 @@ pub const Instance = struct {
         var layer_props: [64]vk.LayerProperties = undefined;
         var layer_n: u32 = layer_props.len;
         const validation = builtin.mode == .debug and g.vkEnumerateInstanceLayerProperties(&layer_n, &layer_props) == vk.success and vk.hasName(layer_props[0..layer_n], std.mem.span(layers[0]));
-        const app: vk.ApplicationInfo = .{ .engine_name = "zpugl", .api_version = vk.api_1_2 };
+        const app: vk.ApplicationInfo = .{ .engine_name = "zpugl", .api_version = vk.api_1_0 };
         var handle: vk.VkInstance = undefined;
         try vk.ok(g.vkCreateInstance(&.{
             .flags = flags,
@@ -198,7 +198,6 @@ pub const Renderer = struct {
         const physical, const family = outer: for (devs[0..dev_n]) |dev| {
             var props: vk.PhysicalDeviceProperties = undefined;
             i.vkGetPhysicalDeviceProperties(dev, &props);
-            if (props.api_version < vk.api_1_2) continue;
             var fam: [16]vk.QueueFamilyProperties = undefined;
             var fam_n: u32 = fam.len;
             i.vkGetPhysicalDeviceQueueFamilyProperties(dev, &fam_n, &fam);
@@ -210,7 +209,7 @@ pub const Renderer = struct {
                 break :outer .{ dev, @as(u32, @intCast(idx)) };
             }
         } else {
-            log.info("no Vulkan 1.2 device with graphics and present queue", .{});
+            log.info("no Vulkan device with graphics and present queue", .{});
             return error.BackendError;
         };
         self.physical = physical;

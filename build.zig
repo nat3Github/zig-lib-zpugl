@@ -90,6 +90,22 @@ pub fn build(b: *std.Build) !void {
     const tests = b.addTest(.{ .root_module = zpugl_mod });
     b.step("test", "Run the zpugl tests").dependOn(&b.addRunArtifact(tests).step);
 
+    const shader_target = b.resolveTargetQuery(.{ .cpu_arch = .spirv32, .os_tag = .vulkan, .cpu_model = .{ .explicit = &std.Target.spirv.cpu.generic }, .ofmt = .spirv });
+    const update_shaders = b.addUpdateSourceFiles();
+    for ([_][]const u8{ "vert", "frag" }) |stage| {
+        const obj = b.addObject(.{
+            .name = b.fmt("vulkan.{s}", .{stage}),
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(b.fmt("dvui/vulkan.{s}.zig", .{stage})),
+                .target = shader_target,
+                .optimize = .ReleaseSmall,
+            }),
+            .use_llvm = false,
+        });
+        update_shaders.addCopyFileToSource(obj.getEmittedBin(), b.fmt("dvui/vulkan.{s}.spv", .{stage}));
+    }
+    b.step("shaders", "Rebuild dvui/vulkan.{vert,frag}.spv").dependOn(&update_shaders.step);
+
     // check-cross: compile-only check for all supported target triples.
     // Linux/Windows ABI types are declared inline in x11.zig/win32.zig so no
     // sysroot or C headers are needed — we build as a static lib (no link step).
