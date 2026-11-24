@@ -285,6 +285,7 @@ pub fn clearTarget(target: dvui.TextureTarget) void {
     var prev: c.GLint = 0;
     c.glGetIntegerv(c.GL_FRAMEBUFFER_BINDING, &prev);
     var fbo = bindTargetFbo(@intCast(@intFromPtr(target.ptr)));
+    c.glDisable(c.GL_SCISSOR_TEST);
     c.glClearColor(0, 0, 0, 0);
     c.glClear(c.GL_COLOR_BUFFER_BIT);
     c.glBindFramebuffer(c.GL_FRAMEBUFFER, @intCast(prev));
