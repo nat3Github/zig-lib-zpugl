@@ -10,6 +10,13 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
+    const vk_mod = b.addModule("zpugl_vk", .{
+        .root_source_file = b.path("dvui/vk_api.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    vk_mod.addImport("zpugl", zpugl_mod);
+
     const library_path = b.option(std.Build.LazyPath, "library_path", "system library path");
 
     if (target.result.abi.isAndroid()) {

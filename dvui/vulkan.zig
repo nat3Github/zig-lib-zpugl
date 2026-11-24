@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const dvui = @import("dvui");
 const zpugl = @import("zpugl");
 const zv = zpugl.vulkan;
-const vk = @import("vk_api.zig");
+const vk = @import("zpugl_vk");
 const log = std.log.scoped(.zpugl_vulkan);
 
 const frames_in_flight = 2;
