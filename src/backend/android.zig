@@ -329,6 +329,7 @@ pub fn createView(view: *root.View) root.Status {
     if (current_view != null) return .bad_call;
     current_view = view;
     destroyed = false;
+    last_size = .{ 0, 0 };
     a.on_app_cmd = onAppCmd;
     a.on_input_event = onInputEvent;
     while (a.window == null) {

@@ -726,6 +726,7 @@ pub const View = struct {
             .width = @intCast(@min(width, std.math.maxInt(u16))),
             .height = @intCast(@min(height, std.math.maxInt(u16))),
         };
+        if (self.handle == null) return .bad_call;
         return backend.setViewSize(self, width, height);
     }
 
