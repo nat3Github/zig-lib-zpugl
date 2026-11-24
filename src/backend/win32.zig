@@ -264,6 +264,9 @@ pub extern "user32" fn ValidateRect(hWnd: HWND, lpRect: ?*const RECT) callconv(.
 pub extern "user32" fn DefWindowProcW(hWnd: HWND, uMsg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.winapi) LRESULT;
 pub extern "user32" fn PostQuitMessage(nExitCode: c_int) callconv(.winapi) void;
 pub extern "user32" fn PeekMessageW(lpMsg: *MSG, hWnd: HWND, wMsgFilterMin: UINT, wMsgFilterMax: UINT, wRemoveMsg: UINT) callconv(.winapi) BOOL;
+pub extern "user32" fn MapVirtualKeyW(code: UINT, map_type: UINT) callconv(.winapi) UINT;
+pub extern "user32" fn ToUnicode(vk: UINT, scan: UINT, state: *const [256]u8, buf: [*]u16, len: c_int, flags: UINT) callconv(.winapi) c_int;
+const MAPVK_VSC_TO_VK_EX = 3;
 pub extern "user32" fn UpdateWindow(hWnd: HWND) callconv(.winapi) BOOL;
 pub extern "user32" fn TranslateMessage(lpMsg: *const MSG) callconv(.winapi) BOOL;
 pub extern "user32" fn DispatchMessageW(lpMsg: *const MSG) callconv(.winapi) LRESULT;
@@ -703,9 +706,12 @@ fn GetKeyStateToggled(vk: c_int) bool {
 // --- Virtual key → zpugl Key ---
 
 fn vkToKey(vk: WPARAM, lParam: LPARAM) u32 {
-    const extended = (lParam >> 24) & 1;
-    _ = extended;
+    const ext = (lParam >> 24) & 1 != 0;
+    const scan: UINT = @intCast((lParam >> 16) & 0xFF);
     return switch (@as(u8, @truncate(vk))) {
+        VK_SHIFT => if (MapVirtualKeyW(scan, MAPVK_VSC_TO_VK_EX) == VK_RSHIFT) 0xE052 else 0xE051,
+        VK_CONTROL => if (ext) 0xE054 else 0xE053,
+        VK_MENU => if (ext) 0xE056 else 0xE055,
         ' ', '0'...'9' => |c| c,
         'A'...'Z' => |c| @as(u32, c) + 0x20,
         VK_BACK => 0x0008,
@@ -766,8 +772,14 @@ fn vkToKey(vk: WPARAM, lParam: LPARAM) u32 {
         VK_SUBTRACT => 0xE0AD,
         VK_DECIMAL => 0xE0AE,
         VK_DIVIDE => 0xE0AF,
-        else => 0,
+        else => |c| unshifted(c, scan),
     };
+}
+
+fn unshifted(vk: UINT, scan: UINT) u32 {
+    const state: [256]u8 = @splat(0);
+    var buf: [4]u16 = undefined;
+    return if (ToUnicode(vk, scan, &state, &buf, buf.len, 4) == 1) buf[0] else 0;
 }
 
 // --- WndProc ---
@@ -809,17 +821,7 @@ fn wndProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.wina
             return 0;
         },
         WM_SIZE => {
-            const w: u16 = @intCast(@min(lParam & 0xFFFF, std.math.maxInt(u16)));
-            const h: u16 = @intCast(@min((lParam >> 16) & 0xFFFF, std.math.maxInt(u16)));
-            view.size_hints[@backingInt(root.SizeHint.current_size)] = .{ .width = w, .height = h };
-            const ev = root.Event{ .configure = .{
-                .x = 0,
-                .y = 0,
-                .width = w,
-                .height = h,
-                .style = view.style,
-            } };
-            _ = common.dispatchEvent(view, &ev);
+            configure(view, @intCast(lParam & 0xFFFF), @intCast((lParam >> 16) & 0xFFFF));
             return 0;
         },
         WM_CLOSE => {
@@ -962,7 +964,7 @@ fn wndProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.wina
         },
         WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP => {
             const press = msg == WM_KEYDOWN or msg == WM_SYSKEYDOWN;
-            const ev: root.KeyEvent = .{ .time = now, .x = 0, .y = 0, .root_x = 0, .root_y = 0, .state = mods, .keycode = @intCast(wParam), .key = vkToKey(wParam, lParam) };
+            const ev: root.KeyEvent = .{ .time = now, .x = 0, .y = 0, .root_x = 0, .root_y = 0, .state = mods, .keycode = @intCast((lParam >> 16) & 0xFF), .key = vkToKey(wParam, lParam) };
             _ = common.dispatchEvent(view, &if (press) root.Event{ .key_press = ev } else root.Event{ .key_release = ev });
             return 0;
         },
@@ -1193,6 +1195,20 @@ pub fn createView(view: *root.View) root.Status {
     return .success;
 }
 
+fn configure(view: *root.View, width: i64, height: i64) void {
+    const w: u16 = @intCast(@min(width, std.math.maxInt(u16)));
+    const h: u16 = @intCast(@min(height, std.math.maxInt(u16)));
+    view.size_hints[@backingInt(root.SizeHint.current_size)] = .{ .width = w, .height = h };
+    _ = common.dispatchEvent(view, &.{ .configure = .{ .x = 0, .y = 0, .width = w, .height = h, .style = view.style } });
+}
+
+pub fn realized(view: *root.View) void {
+    if (view.parent == 0) return;
+    var rc: RECT = undefined;
+    if (GetClientRect(view.handle.?, &rc) == 0) return;
+    configure(view, rc.right - rc.left, rc.bottom - rc.top);
+}
+
 pub fn destroyView(view: *root.View) void {
     if (view.handle) |h| {
         if (view.impl) |p| {
@@ -1303,24 +1319,7 @@ pub fn setViewStyle(view: *root.View, flags: root.ViewStyleFlags) root.Status {
 
 pub fn obscureView(view: *root.View) root.Status {
     const hwnd = view.handle orelse return .bad_call;
-    // Try the normal path: invalidate + UpdateWindow (synchronous WM_PAINT).
-    // On headless / DWM-composited sessions UpdateWindow may not fire WM_PAINT
-    // if the window is occluded or minimized.  Fall back to dispatching the
-    // expose event directly so the smoke test works in those environments.
     _ = InvalidateRect(hwnd, null, 0);
-    _ = UpdateWindow(hwnd);
-    // Always dispatch a direct expose so callers that rely on obscureView to
-    // trigger one frame (e.g. smoke tests on headless Windows) are satisfied.
-    var rc: RECT = undefined;
-    _ = GetClientRect(hwnd, &rc);
-    const w: u16 = @intCast(@min(rc.right - rc.left, std.math.maxInt(u16)));
-    const h: u16 = @intCast(@min(rc.bottom - rc.top, std.math.maxInt(u16)));
-    const ev = root.Event{ .expose = .{ .x = 0, .y = 0, .width = w, .height = h } };
-    _ = common.dispatchEvent(view, &ev);
-    // Validate the update region so the pending WM_PAINT (queued by
-    // InvalidateRect above) doesn't fire a second expose event when the
-    // message pump runs in world.update().
-    _ = ValidateRect(hwnd, null);
     return .success;
 }
 
@@ -1367,12 +1366,12 @@ pub fn setCursor(view: *root.View, cursor: root.Cursor) root.Status {
     return .success;
 }
 
-pub fn startTimer(world: *root.World, view: *root.View, id: usize, freq: f64) root.Status {
+pub fn startTimer(world: *root.World, view: *root.View, id: usize, timeout: f64) root.Status {
     const impl = getWorldImpl(world) orelse return .bad_call;
     const hwnd = view.handle orelse return .bad_call;
-    if (freq <= 0) return .bad_parameter;
+    if (timeout <= 0) return .bad_parameter;
 
-    const ms_interval: UINT = @intCast(@max(1, @as(u64, @intFromFloat(1000.0 / freq))));
+    const ms_interval: UINT = @intFromFloat(@min(@floor(timeout * 1000.0), std.math.maxInt(UINT)));
 
     // Replace existing
     for (impl.timers.items) |*t| {

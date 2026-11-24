@@ -1819,10 +1819,10 @@ pub fn setCursor(view: *root.View, cursor: root.Cursor) root.Status {
     return .success;
 }
 
-pub fn startTimer(world: *root.World, view: *root.View, id: usize, freq: f64) root.Status {
+pub fn startTimer(world: *root.World, view: *root.View, id: usize, timeout: f64) root.Status {
     const impl = getWorldImpl(world) orelse return .bad_call;
-    if (freq <= 0) return .bad_parameter;
-    const interval_ns: u64 = @intFromFloat(1_000_000_000.0 / freq);
+    if (timeout <= 0) return .bad_parameter;
+    const interval_ns: u64 = @intFromFloat(timeout * 1_000_000_000.0);
     // Replace existing timer with same id
     for (impl.timers.items) |*t| {
         if (t.id == id and t.view == view) {

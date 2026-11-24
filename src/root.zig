@@ -547,8 +547,8 @@ pub const World = struct {
         return backend.update(self, timeout);
     }
 
-    pub fn startTimer(self: *World, view: *View, id: usize, freq: f64) Status {
-        return backend.startTimer(self, view, id, freq);
+    pub fn startTimer(self: *World, view: *View, id: usize, timeout: f64) Status {
+        return backend.startTimer(self, view, id, timeout);
     }
 
     pub fn stopTimer(self: *World, view: *View, id: usize) Status {
@@ -935,7 +935,33 @@ pub const View = struct {
 };
 
 pub const common = struct {
+    fn filterMods(state: Mods, key: u32) Mods {
+        var m = state;
+        switch (key) {
+            0xE051, 0xE052 => m.shift = false,
+            0xE053, 0xE054 => m.ctrl = false,
+            0xE055, 0xE056 => m.alt = false,
+            0xE057, 0xE058 => m.super = false,
+            0xE045 => m.num_lock = false,
+            0xE046 => m.scroll_lock = false,
+            0xE047 => m.caps_lock = false,
+            else => {},
+        }
+        return m;
+    }
+
     pub fn dispatchEvent(view: *View, event: *const Event) Status {
+        switch (event.*) {
+            inline .key_press, .key_release => |k, tag| {
+                const state = filterMods(k.state, k.key);
+                if (state != k.state) {
+                    var e = k;
+                    e.state = state;
+                    return dispatchEvent(view, &@unionInit(Event, @tagName(tag), e));
+                }
+            },
+            else => {},
+        }
         if (view.event_func) |f| {
             const t = @as(EventType, event.*);
             const needs_enter = (t == .expose or t == .configure or t == .update);
