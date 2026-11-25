@@ -178,12 +178,14 @@ fn isGl(self: *const Core) bool {
     return self.view.graphics_backend == .gl;
 }
 
-fn finishCreate(self: *Core) void {
+fn readScale(self: *Core) void {
     const s: f32 = self.scale_override orelse @floatCast(zpugl.backend_impl.getScaleFactor(self.view));
-    if (s > 0) {
-        self.scale = s;
-        self.size = self.natural.scale(s, dvui.Size.Physical);
-    }
+    if (s > 0) self.scale = s;
+    self.size = self.natural.scale(self.scale, dvui.Size.Physical);
+}
+
+fn finishCreate(self: *Core) void {
+    self.readScale();
     if (self.view.getParent() != 0) self.fitChildView();
 }
 
@@ -312,11 +314,7 @@ fn onEvent(view: *zpugl.View, event: *const zpugl.Event) zpugl.Status {
 
     switch (event.*) {
         .expose => {
-            const s: f32 = self.scale_override orelse @floatCast(zpugl.backend_impl.getScaleFactor(view));
-            if (s > 0) {
-                self.scale = s;
-                self.size = self.natural.scale(s, dvui.Size.Physical);
-            }
+            self.readScale();
             if (view.graphics_backend == .gl) zpugl.gl.resize(view);
             if (self.repaint != null and !self.in_frame) {
                 self.in_expose = true;
@@ -325,6 +323,7 @@ fn onEvent(view: *zpugl.View, event: *const zpugl.Event) zpugl.Status {
             } else self.woken = true;
         },
         .configure => |ev| if (view.getParent() == 0) {
+            self.readScale();
             const div: f32 = if (builtin.os.tag.isDarwin()) 1 else self.scale;
             self.natural = .{ .w = @as(f32, @floatFromInt(ev.width)) / div, .h = @as(f32, @floatFromInt(ev.height)) / div };
             self.size = self.natural.scale(self.scale, dvui.Size.Physical);
