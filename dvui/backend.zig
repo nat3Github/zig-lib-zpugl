@@ -103,6 +103,7 @@ fn open(allocator: std.mem.Allocator, opts: Options) !*Core {
 
 pub fn create(allocator: std.mem.Allocator, opts: Options) !*Core {
     std.debug.assert(opts.parts == null or (use_metal and opts.parent == null));
+    std.debug.assert(!opts.vulkan or builtin.os.tag != .ios);
     const self = try allocator.create(Core);
     errdefer allocator.destroy(self);
     const natural: dvui.Size.Natural = .{ .w = @floatFromInt(opts.width), .h = @floatFromInt(opts.height) };

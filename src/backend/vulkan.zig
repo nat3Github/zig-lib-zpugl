@@ -57,7 +57,6 @@ const default_libraries: []const ?[*:0]const u8 = if (is_android)
 else switch (builtin.os.tag) {
     .windows => &.{"vulkan-1.dll"},
     .macos => &.{ "libvulkan.dylib", "libvulkan.1.dylib", "libMoltenVK.dylib", "/opt/homebrew/lib/libvulkan.1.dylib", "/opt/homebrew/lib/libMoltenVK.dylib" },
-    .ios => &.{ null, "MoltenVK.framework/MoltenVK" },
     else => &.{ "libvulkan.so", "libvulkan.so.1" },
 };
 
@@ -68,6 +67,7 @@ pub const Loader = struct {
 
     pub fn init(world: *root.World, library_name: ?[*:0]const u8) error{VulkanLibraryNotFound}!Loader {
         _ = world;
+        if (builtin.os.tag == .ios) return error.VulkanLibraryNotFound;
         const lib = if (library_name) |name| Lib.open(name) else for (default_libraries) |name| {
             const l = Lib.open(name) orelse continue;
             if (l.lookup(PFN_vkGetInstanceProcAddr, "vkGetInstanceProcAddr") != null) break l;
