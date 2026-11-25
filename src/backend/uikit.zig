@@ -330,6 +330,8 @@ pub fn runApplication(entry: *const fn () void) noreturn {
 }
 
 pub fn createView(view: *root.View) root.Status {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     registerClasses();
     world_ref = view.world;
     const size = view.size_hints[@backingInt(root.SizeHint.default_size)];
@@ -371,6 +373,8 @@ fn ownedWindow(view: *root.View) ?objc.Object {
 }
 
 pub fn destroyView(view: *root.View) void {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     const v = uiView(view) orelse return;
     const window = ownedWindow(view);
     for (client_queue.items) |*p| if (p.view == view) {
@@ -387,6 +391,8 @@ pub fn destroyView(view: *root.View) void {
 }
 
 pub fn showView(view: *root.View, _: root.ShowCommand) root.Status {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     const v = uiView(view) orelse return .bad_call;
     if (ownedWindow(view)) |w| w.msgSend(void, "makeKeyAndVisible", .{});
     v.msgSend(void, "setHidden:", .{false});
@@ -395,6 +401,8 @@ pub fn showView(view: *root.View, _: root.ShowCommand) root.Status {
 }
 
 pub fn hideView(view: *root.View) root.Status {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     const v = uiView(view) orelse return .bad_call;
     v.msgSend(void, "setHidden:", .{true});
     view.visible = false;
@@ -433,6 +441,8 @@ pub fn getTime(_: *root.World) f64 {
 }
 
 pub fn getScaleFactor(view: *root.View) f64 {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     const v = uiView(view) orelse return 1.0;
     return v.msgSend(CGFloat, "contentScaleFactor", .{});
 }
@@ -447,6 +457,8 @@ pub fn sendEvent(view: *root.View, event: *const root.Event) root.Status {
 }
 
 pub fn obscureView(view: *root.View) root.Status {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     const v = uiView(view) orelse return .bad_call;
     v.msgSend(void, "setNeedsLayout", .{});
     return .success;
@@ -457,12 +469,16 @@ pub fn obscureRegion(view: *root.View, _: i32, _: i32, _: u32, _: u32) root.Stat
 }
 
 pub fn grabFocus(view: *root.View) root.Status {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     const v = uiView(view) orelse return .bad_call;
     _ = v.msgSend(bool, "becomeFirstResponder", .{});
     return .success;
 }
 
 pub fn hasFocus(view: *root.View) bool {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     const v = uiView(view) orelse return false;
     return v.msgSend(bool, "isFirstResponder", .{});
 }
@@ -472,6 +488,8 @@ pub fn startTextInput(view: *root.View, _: root.TextInputRect) root.Status {
 }
 
 pub fn stopTextInput(view: *root.View) root.Status {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     const v = uiView(view) orelse return .bad_call;
     _ = v.msgSend(bool, "resignFirstResponder", .{});
     return .success;
@@ -495,6 +513,8 @@ pub fn applySizeHints(_: *root.View) root.Status {
 }
 
 pub fn setViewSize(view: *root.View, w: u32, h: u32) root.Status {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     const v = uiView(view) orelse return .bad_call;
     if (view.parent == 0) return .success;
     var f = v.msgSend(CGRect, "frame", .{});
@@ -504,6 +524,8 @@ pub fn setViewSize(view: *root.View, w: u32, h: u32) root.Status {
 }
 
 pub fn setViewPosition(view: *root.View, x: i32, y: i32) root.Status {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     const v = uiView(view) orelse return .bad_call;
     if (view.parent == 0) return .success;
     var f = v.msgSend(CGRect, "frame", .{});
@@ -543,6 +565,8 @@ pub fn paste(view: *root.View) root.Status {
 }
 
 pub fn getNumClipboardTypes(_: *root.View, clipboard: root.Clipboard) u32 {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     if (clipboard != .general) return 0;
     return if (pasteboard().msgSend(bool, "hasStrings", .{})) 1 else 0;
 }
@@ -562,6 +586,8 @@ pub fn rejectOffer(_: *root.View, _: *const root.DataOfferEvent, _: i32, _: i32,
 }
 
 pub fn getClipboard(view: *root.View, clipboard: root.Clipboard, type_index: u32) ?[]const u8 {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     if (clipboard != .general or type_index != 0) return null;
     const s = pasteboard().msgSend(c.id, "string", .{}) orelse return null;
     const utf8 = std.mem.span(obj(s).msgSend([*:0]const u8, "UTF8String", .{}));
@@ -571,6 +597,8 @@ pub fn getClipboard(view: *root.View, clipboard: root.Clipboard, type_index: u32
 }
 
 pub fn setClipboard(_: *root.View, clipboard: root.Clipboard, _: []const u8, data: []const u8) root.Status {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     if (clipboard != .general) return .unsupported;
     const s = cls("NSString").msgSend(objc.Object, "alloc", .{})
         .msgSend(objc.Object, "initWithBytes:length:encoding:", .{ data.ptr, data.len, @as(NSUInteger, 4) });
@@ -580,6 +608,8 @@ pub fn setClipboard(_: *root.View, clipboard: root.Clipboard, _: []const u8, dat
 }
 
 pub fn openUrl(url: [:0]const u8) root.Status {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     const nsurl = cls("NSURL").msgSend(c.id, "URLWithString:", .{nsString(url.ptr)}) orelse return .bad_parameter;
     const app = cls("UIApplication").msgSend(objc.Object, "sharedApplication", .{});
     const opts = cls("NSDictionary").msgSend(objc.Object, "dictionary", .{});
@@ -588,6 +618,8 @@ pub fn openUrl(url: [:0]const u8) root.Status {
 }
 
 pub fn prefersDark(view: *root.View) ?bool {
+    const pool = objc_autoreleasePoolPush();
+    defer objc_autoreleasePoolPop(pool);
     const v = uiView(view) orelse return null;
     return v.msgSend(objc.Object, "traitCollection", .{}).msgSend(NSInteger, "userInterfaceStyle", .{}) == 2;
 }

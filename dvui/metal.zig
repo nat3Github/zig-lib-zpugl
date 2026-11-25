@@ -97,6 +97,8 @@ pub const Renderer = struct {
     screen_h: u32 = 0,
 
     pub fn init(_: std.mem.Allocator, view: *zpugl.View) !Renderer {
+        const pool = objc_autoreleasePoolPush();
+        defer objc_autoreleasePoolPop(pool);
         const layer = obj(@ptrCast(@alignCast(view.getContext() orelse return error.NoMetalLayer)));
         const device = obj(MTLCreateSystemDefaultDevice() orelse return error.NoMetalDevice);
         layer.msgSend(void, "setDevice:", .{device});
@@ -318,6 +320,8 @@ pub const Renderer = struct {
     }
 
     fn newTexture(self: *Renderer, options: dvui.Texture.CreateOptions, usage: NSUInteger) objc.Object {
+        const pool = objc_autoreleasePoolPush();
+        defer objc_autoreleasePoolPop(pool);
         const desc = cls("MTLTextureDescriptor").msgSend(objc.Object, "texture2DDescriptorWithPixelFormat:width:height:mipmapped:", .{
             pixel_rgba8,
             @as(NSUInteger, options.width),
@@ -347,6 +351,8 @@ pub const Renderer = struct {
     }
 
     pub fn textureUpdate(self: *Renderer, texture: dvui.Texture, pixels: [*]const u8) void {
+        const pool = if (self.cmd == null) objc_autoreleasePoolPush() else null;
+        defer if (pool) |p| objc_autoreleasePoolPop(p);
         const row: NSUInteger = texture.width * 4;
         const len: NSUInteger = row * texture.height;
         const staging = self.device.msgSend(objc.Object, "newBufferWithBytes:length:options:", .{ pixels, len, @as(NSUInteger, 0) });
@@ -383,6 +389,8 @@ pub const Renderer = struct {
     }
 
     pub fn targetClear(self: *Renderer, target: dvui.TextureTarget) void {
+        const pool = if (self.cmd == null) objc_autoreleasePoolPush() else null;
+        defer if (pool) |p| objc_autoreleasePoolPop(p);
         const own_cmd = self.cmd == null;
         self.endEncoder();
         const cmd = self.cmd orelse self.queue.msgSend(objc.Object, "commandBuffer", .{});
@@ -397,6 +405,8 @@ pub const Renderer = struct {
     }
 
     pub fn targetRead(self: *Renderer, target: dvui.TextureTarget, pixels_out: [*]u8) void {
+        const pool = if (self.cmd == null) objc_autoreleasePoolPush() else null;
+        defer if (pool) |p| objc_autoreleasePoolPop(p);
         self.endEncoder();
         const tex = obj(@ptrCast(@alignCast(target.ptr)));
         const cmd = self.cmd orelse self.queue.msgSend(objc.Object, "commandBuffer", .{});
