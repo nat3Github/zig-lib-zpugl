@@ -206,7 +206,12 @@ fn onInputEvent(_: *App, event: *AInputEvent) callconv(.c) i32 {
             const masked = action & AMOTION_EVENT_ACTION_MASK;
             const idx: usize = @intCast((action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> 8);
             switch (masked) {
-                0, 1, 3, 5, 6 => {
+                3 => for (0..AMotionEvent_getPointerCount(event)) |i| {
+                    const x = @as(f64, AMotionEvent_getX(event, i)) / s;
+                    const y = @as(f64, AMotionEvent_getY(event, i)) / s;
+                    _ = common.dispatchEvent(view, &.{ .touch_end = .{ .time = t, .id = @intCast(AMotionEvent_getPointerId(event, i)), .x = x, .y = y } });
+                },
+                0, 1, 5, 6 => {
                     const x = @as(f64, AMotionEvent_getX(event, idx)) / s;
                     const y = @as(f64, AMotionEvent_getY(event, idx)) / s;
                     const te: root.TouchEvent = .{ .time = t, .id = @intCast(AMotionEvent_getPointerId(event, idx)), .x = x, .y = y };
