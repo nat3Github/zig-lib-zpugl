@@ -975,6 +975,8 @@ export fn zpugl_mac_create_view(
     has_pos: bool,
     metal: bool,
 ) usize {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (!isMainThread()) return 0;
 
     const app = nsApp();
@@ -1040,6 +1042,8 @@ export fn zpugl_mac_create_view(
 }
 
 export fn zpugl_mac_realized(native: usize, view_ptr: *anyopaque) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const view = objFromId(@ptrFromInt(native));
     setIvarPtr(view.value, view_ptr);
     const frame = view.msgSend(NSRect, "frame", .{});
@@ -1047,6 +1051,8 @@ export fn zpugl_mac_realized(native: usize, view_ptr: *anyopaque) void {
 }
 
 export fn zpugl_mac_destroy_view(native: usize) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (native == 0) return;
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     if (ivarPtr(view.value)) |p| stopViewTimers(@intFromPtr(p));
@@ -1070,6 +1076,8 @@ export fn zpugl_mac_destroy_view(native: usize) void {
 }
 
 export fn zpugl_mac_show_view(native: usize, command: u32) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     view.msgSend(void, "setNeedsDisplay:", .{true});
     const win = ownWindow(native) orelse return view.msgSend(void, "setHidden:", .{false});
@@ -1084,6 +1092,8 @@ export fn zpugl_mac_show_view(native: usize, command: u32) void {
 }
 
 export fn zpugl_mac_hide_view(native: usize) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const win = ownWindow(native) orelse return objFromId(@ptrFromInt(native)).msgSend(void, "setHidden:", .{true});
     win.msgSend(void, "orderOut:", .{@as(c.id, null)});
 }
@@ -1124,6 +1134,8 @@ fn placeWindow(win: objc.Object, x: f64, y: f64) bool {
 }
 
 export fn zpugl_mac_window_position(native: usize, x: *i32, y: *i32) bool {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const win = viewWindow(native) orelse return false;
     const f = win.msgSend(NSRect, "frame", .{});
     x.* = @intFromFloat(@round(f.origin.x));
@@ -1132,6 +1144,8 @@ export fn zpugl_mac_window_position(native: usize, x: *i32, y: *i32) bool {
 }
 
 export fn zpugl_mac_set_size(native: usize, w: u32, h: u32) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     const size: NSSize = .{ .width = @floatFromInt(w), .height = @floatFromInt(h) };
     const win = viewWindow(native);
@@ -1149,6 +1163,8 @@ export fn zpugl_mac_set_size(native: usize, w: u32, h: u32) void {
 // top-left coordinates; macOS NSViews are bottom-left unless flipped, so the
 // y is converted when the superview is not flipped.
 export fn zpugl_mac_set_view_position(native: usize, x: i32, y: i32) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (ownWindow(native)) |win| {
         const f = win.msgSend(NSRect, "frame", .{});
         win.msgSend(void, "setFrameOrigin:", .{NSPoint{ .x = @floatFromInt(x), .y = primaryScreenHeight() - @as(CGFloat, @floatFromInt(y)) - f.size.height }});
@@ -1166,31 +1182,43 @@ export fn zpugl_mac_set_view_position(native: usize, x: i32, y: i32) void {
     view.msgSend(void, "setFrameOrigin:", .{NSPoint{ .x = @floatFromInt(x), .y = oy }});
 }
 export fn zpugl_mac_set_min_size(native: usize, w: u32, h: u32) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (ownWindow(native)) |win| {
         win.msgSend(void, "setContentMinSize:", .{NSSize{ .width = @floatFromInt(w), .height = @floatFromInt(h) }});
     }
 }
 export fn zpugl_mac_set_max_size(native: usize, w: u32, h: u32) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (ownWindow(native)) |win| {
         win.msgSend(void, "setContentMaxSize:", .{NSSize{ .width = @floatFromInt(w), .height = @floatFromInt(h) }});
     }
 }
 export fn zpugl_mac_set_title(native: usize, title: [*:0]const u8) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (ownWindow(native)) |win| {
         const s = nsClass("NSString").msgSend(objc.Object, "stringWithUTF8String:", .{title});
         win.msgSend(void, "setTitle:", .{s});
     }
 }
 export fn zpugl_mac_get_scale_factor(native: usize) f64 {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (viewWindow(native)) |win| return win.msgSend(CGFloat, "backingScaleFactor", .{});
     return 1.0;
 }
 export fn zpugl_mac_grab_focus(native: usize) bool {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (objFromId(@ptrFromInt(native)).msgSend(bool, "isHiddenOrHasHiddenAncestor", .{})) return false;
     focusView(@ptrFromInt(native));
     return true;
 }
 export fn zpugl_mac_has_focus(native: usize) bool {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const view: c.id = @ptrFromInt(native);
     if (viewWindow(native)) |win| {
         const fr = win.msgSend(c.id, "firstResponder", .{});
@@ -1210,6 +1238,8 @@ fn extendedCursor(sel_name: [:0]const u8) ?objc.Object {
 }
 
 export fn zpugl_mac_set_cursor(_: usize, cursor_type: u32) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const NSCursor = nsClass("NSCursor");
     var cursor: objc.Object = undefined;
     switch (cursor_type) {
@@ -1228,11 +1258,15 @@ export fn zpugl_mac_set_cursor(_: usize, cursor_type: u32) void {
 }
 
 export fn zpugl_mac_obscure_view(native: usize) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     view.msgSend(void, "setNeedsDisplay:", .{true});
 }
 
 export fn zpugl_mac_obscure_region(native: usize, x: f64, y: f64, w: f64, h: f64) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     view.msgSend(void, "setNeedsDisplayInRect:", .{NSRect{
         .origin = .{ .x = x, .y = y },
@@ -1241,6 +1275,8 @@ export fn zpugl_mac_obscure_region(native: usize, x: f64, y: f64, w: f64, h: f64
 }
 
 export fn zpugl_mac_set_transient_parent(child_native: usize, parent_native: usize) u32 {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (child_native == 0 or parent_native == 0) return 1;
     const child_win = ownWindow(child_native) orelse return 1;
     const parent_win = viewWindow(parent_native) orelse return 1;
@@ -1324,6 +1360,8 @@ export fn zpugl_mac_get_time() f64 {
 }
 
 export fn zpugl_mac_set_view_style(native: usize, flags: u32) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const win = ownWindow(native) orelse return;
     const f: ViewStyleFlags = @bitCast(flags);
     var mask = win.msgSend(NSUInteger, "styleMask", .{});
@@ -1339,6 +1377,8 @@ export fn zpugl_mac_set_view_style(native: usize, flags: u32) void {
 }
 
 export fn zpugl_mac_send_close(native: usize) u32 {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     if (ownWindow(native)) |win| {
         win.msgSend(void, "performClose:", .{@as(c.id, null)});
@@ -1369,6 +1409,8 @@ var timers_mutex: SpinMutex = .{};
 var timers: std.AutoHashMapUnmanaged(TimerKey, c.id) = .empty;
 
 export fn zpugl_mac_start_timer(zig_view: *anyopaque, timer_id: usize, freq: f64) u32 {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (freq <= 0) return 6;
     const cls = ensureTimerClass();
     const tgt = cls.msgSend(objc.Object, "alloc", .{})
@@ -1408,6 +1450,8 @@ fn stopViewTimers(view: usize) void {
 }
 
 export fn zpugl_mac_stop_timer(zig_view: *anyopaque, timer_id: usize) u32 {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const key = TimerKey{ .view = @intFromPtr(zig_view), .id = timer_id };
     timers_mutex.lock();
     defer timers_mutex.unlock();
@@ -1427,6 +1471,8 @@ fn releaseTimer(t: c.id) void {
 var clip_buf: std.ArrayList(u8) = .empty;
 
 export fn zpugl_mac_set_clipboard(mime: [*:0]const u8, data: [*]const u8, len: usize) u32 {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const pb = nsClass("NSPasteboard").msgSend(objc.Object, "generalPasteboard", .{});
     _ = pb.msgSend(NSInteger, "clearContents", .{});
     const mime_slice = std.mem.span(mime);
@@ -1493,6 +1539,8 @@ fn dragPasteboard(native: usize) ?objc.Object {
 }
 
 export fn zpugl_mac_get_clipboard(native: usize, clipboard: u32, out_data: *[*]const u8, out_len: *usize, type_index: u32) u32 {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const pb = if (clipboard == 1)
         dragPasteboard(native) orelse {
             out_data.* = "";
@@ -1542,6 +1590,8 @@ export fn zpugl_mac_get_clipboard(native: usize, clipboard: u32, out_data: *[*]c
 }
 
 export fn zpugl_mac_get_num_clipboard_types(native: usize, clipboard: u32) u32 {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const pb = if (clipboard == 1)
         dragPasteboard(native) orelse return 0
     else
@@ -1553,6 +1603,8 @@ export fn zpugl_mac_get_num_clipboard_types(native: usize, clipboard: u32) u32 {
 }
 
 export fn zpugl_mac_get_clipboard_type(native: usize, clipboard: u32, idx: u32) ?[*:0]const u8 {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const pb = if (clipboard == 1)
         dragPasteboard(native) orelse return null
     else
@@ -1572,6 +1624,8 @@ export fn zpugl_mac_get_clipboard_type(native: usize, clipboard: u32, idx: u32) 
 }
 
 export fn zpugl_mac_register_drop_type(native: usize, mime: [*:0]const u8) u32 {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (native == 0) return 1;
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     const mime_slice = std.mem.span(mime);
@@ -1609,6 +1663,8 @@ export fn zpugl_mac_register_drop_type(native: usize, mime: [*:0]const u8) u32 {
 }
 
 export fn zpugl_mac_accept_offer(native: usize, type_index: u32, action: u32) u32 {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (native == 0) return 1;
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     const pb = nsClass("NSPasteboard").msgSend(objc.Object, "generalPasteboard", .{});
@@ -1631,6 +1687,8 @@ export fn zpugl_mac_accept_offer(native: usize, type_index: u32, action: u32) u3
 }
 
 export fn zpugl_mac_open_url(url: [*:0]const u8) u32 {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const s = nsClass("NSString").msgSend(objc.Object, "stringWithUTF8String:", .{url});
     if (s.value == null) return 1;
     const u = nsClass("NSURL").msgSend(objc.Object, "URLWithString:", .{s});
@@ -1640,6 +1698,8 @@ export fn zpugl_mac_open_url(url: [*:0]const u8) u32 {
 }
 
 export fn zpugl_mac_prefers_dark(native: usize) bool {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const target: objc.Object = if (native != 0) .{ .value = @ptrFromInt(native) } else nsApp();
     const appearance = target.msgSend(objc.Object, "effectiveAppearance", .{});
     if (appearance.value == null) return false;
@@ -1668,6 +1728,8 @@ const NSOpenGLProfileVersionLegacy: u32 = 0x1000;
 const NSOpenGLProfileVersion3_2Core: u32 = 0x3200;
 
 export fn zpugl_mac_gl_create(native: usize, major: i32, minor: i32, profile: i32, double_buf: bool, swap_interval: i32) usize {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     _ = minor;
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     // Use Core Profile 3.2 when requested; otherwise try legacy then fall back to
@@ -1715,28 +1777,38 @@ export fn zpugl_mac_gl_create(native: usize, major: i32, minor: i32, profile: i3
 }
 
 export fn zpugl_mac_gl_destroy(ctx_ptr: usize) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (ctx_ptr == 0) return;
     const ctx: objc.Object = .{ .value = @ptrFromInt(ctx_ptr) };
     ctx.msgSend(void, "clearDrawable", .{});
     ctx.release();
 }
 export fn zpugl_mac_gl_enter(ctx_ptr: usize) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const ctx: objc.Object = .{ .value = @ptrFromInt(ctx_ptr) };
     ctx.msgSend(void, "makeCurrentContext", .{});
     // Sync context with view's current position/size (needed for plugin subviews).
     ctx.msgSend(void, "update", .{});
 }
 export fn zpugl_mac_gl_leave(ctx_ptr: usize, swap: bool) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const ctx: objc.Object = .{ .value = @ptrFromInt(ctx_ptr) };
     if (swap) ctx.msgSend(void, "flushBuffer", .{});
     nsClass("NSOpenGLContext").msgSend(void, "clearCurrentContext", .{});
 }
 export fn zpugl_mac_gl_resize(ctx_ptr: usize) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const ctx: objc.Object = .{ .value = @ptrFromInt(ctx_ptr) };
     ctx.msgSend(void, "update", .{});
 }
 
 export fn zpugl_embed_view(parent_nsview: *anyopaque, child_nsview: *anyopaque) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const parent = objc.Object{ .value = @ptrCast(@alignCast(parent_nsview)) };
     const child = objc.Object{ .value = @ptrCast(@alignCast(child_nsview)) };
     parent.msgSend(void, "addSubview:", .{child});
@@ -1747,6 +1819,8 @@ export fn zpugl_embed_view(parent_nsview: *anyopaque, child_nsview: *anyopaque) 
 }
 
 export fn zpugl_remove_view(au_nsview: *anyopaque) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const view = objc.Object{ .value = @ptrCast(@alignCast(au_nsview)) };
     view.msgSend(void, "removeFromSuperview", .{});
     view.msgSend(void, "release", .{});
@@ -1783,6 +1857,8 @@ const CocoaViewInfo = extern struct {
 };
 
 export fn zpugl_au_create_cocoa_view(au_unit: *anyopaque, w: f32, h: f32) ?*anyopaque {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     var size: u32 = 0;
     var writable: u8 = 0;
     if (AudioUnitGetPropertyInfo(au_unit, kAudioUnitProperty_CocoaUI, kAudioUnitScope_Global, 0, &size, &writable) != 0) return null;
@@ -1817,6 +1893,8 @@ export fn zpugl_au_create_cocoa_view(au_unit: *anyopaque, w: f32, h: f32) ?*anyo
 /// to register itself with AudioComponentFindNext. Call before Au.load().
 /// Returns true on success.
 export fn zpugl_au_register_bundle(path: [*:0]const u8) bool {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const NSString = objc.getClass("NSString") orelse return false;
     const NSBundle = objc.getClass("NSBundle") orelse return false;
 
@@ -1836,6 +1914,8 @@ export fn zpugl_au_register_bundle(path: [*:0]const u8) bool {
 // --- Text input activation ---
 
 export fn zpugl_mac_start_text_input(native: usize, x: i32, y: i32, w: u32, h: u32) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (native == 0) return;
     const view = objFromId(@ptrFromInt(native));
     // Store the rect for firstRectForCharacterRange:.
@@ -1861,6 +1941,8 @@ export fn zpugl_mac_start_text_input(native: usize, x: i32, y: i32, w: u32, h: u
 }
 
 export fn zpugl_mac_stop_text_input(native: usize) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (native == 0) return;
     const ctx_ivar = c.object_getInstanceVariable(@ptrFromInt(native), "textInputContext", null);
     const ctx_id = c.object_getIvar(@ptrFromInt(native), ctx_ivar);
@@ -1877,6 +1959,8 @@ export fn zpugl_mac_stop_text_input(native: usize) void {
 }
 
 export fn zpugl_mac_set_text_input_rect(native: usize, x: i32, y: i32, w: u32, h: u32) void {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     if (native == 0) return;
     setIvarSmall(@ptrFromInt(native), "textInputRectX", @as(usize, @intCast(@max(0, x))));
     setIvarSmall(@ptrFromInt(native), "textInputRectY", @as(usize, @intCast(@max(0, y))));
@@ -1891,6 +1975,8 @@ export fn zpugl_mac_set_text_input_rect(native: usize, x: i32, y: i32, w: u32, h
 }
 
 export fn zpugl_nswindow_content_view(nswindow: *anyopaque) ?*anyopaque {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
     const window = objc.Object{ .value = @ptrCast(@alignCast(nswindow)) };
     const view = window.msgSend(objc.Object, "contentView", .{});
     return view.value;

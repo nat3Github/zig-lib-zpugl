@@ -543,13 +543,12 @@ pub const World = struct {
         return backend.getTime(self);
     }
 
-    /// Processes pending events and drains an autorelease pool around its own
-    /// work. On macOS and iOS a program world leaves every other pool to the
-    /// application. The iOS entry point runs inside a UIKit callback that never
-    /// returns, so its outer pool is never drained. Objective-C objects the
-    /// application autoreleases between two calls therefore stay alive for the
-    /// rest of the process. An application that calls Objective-C APIs in its
-    /// loop wraps each iteration in its own pool
+    /// Processes pending events. On macOS and iOS every zpugl function that
+    /// calls Objective-C drains its own autorelease pool, so zpugl calls between
+    /// two updates leave nothing behind. The iOS entry point runs inside a UIKit
+    /// callback that never returns, so its outer pool is never drained. An
+    /// application that calls Objective-C APIs itself outside its event
+    /// handlers wraps those calls in its own pool
     /// (`objc_autoreleasePoolPush`/`objc_autoreleasePoolPop`).
     pub fn update(self: *World, timeout: f64) Status {
         return backend.update(self, timeout);

@@ -56,6 +56,8 @@ const ios = if (builtin.os.tag == .ios) struct {
     const objc = @import("objc");
 
     fn create(v: ?*anyopaque) root.Status {
+        const pool = objc.AutoreleasePool.init();
+        defer pool.deinit();
         const view: *root.View = @ptrCast(@alignCast(v.?));
         const ui_view: objc.Object = .{ .value = @ptrCast(@alignCast(view.handle orelse return .bad_call)) };
         const layer = ui_view.msgSend(objc.Object, "layer", .{});
@@ -87,6 +89,8 @@ const mac = if (builtin.os.tag == .macos) struct {
     const MTLPixelFormatBGRA8Unorm: usize = 80;
 
     fn create(v: ?*anyopaque) root.Status {
+        const pool = objc.AutoreleasePool.init();
+        defer pool.deinit();
         const view: *root.View = @ptrCast(@alignCast(v.?));
         const native = view.handle orelse return .bad_call;
         const ns_view: objc.Object = .{ .value = @ptrCast(@alignCast(native)) };
