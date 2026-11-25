@@ -1761,6 +1761,7 @@ export fn zpugl_mac_gl_create(native: usize, major: i32, minor: i32, profile: i3
             .msgSend(objc.Object, "initWithAttributes:", .{@as([*]const u32, &attrs_core)});
     }
     if (fmt.value == null) return 0;
+    defer fmt.release();
     const ctx = nsClass("NSOpenGLContext")
         .msgSend(objc.Object, "alloc", .{})
         .msgSend(objc.Object, "initWithFormat:shareContext:", .{ fmt, @as(c.id, null) });
@@ -1772,7 +1773,6 @@ export fn zpugl_mac_gl_create(native: usize, major: i32, minor: i32, profile: i3
     }
     // Required for Retina: GL surface matches physical pixels, not logical points.
     view.msgSend(void, "setWantsBestResolutionOpenGLSurface:", .{true});
-    _ = ctx.retain();
     return @intFromPtr(ctx.value);
 }
 
@@ -1881,6 +1881,7 @@ export fn zpugl_au_create_cocoa_view(au_unit: *anyopaque, w: f32, h: f32) ?*anyo
     if (factory_class.value == null) return null;
 
     const factory = factory_class.msgSend(objc.Object, "alloc", .{}).msgSend(objc.Object, "init", .{});
+    defer factory.release();
     const ns_size = NSSize{ .width = w, .height = h };
     const view = factory.msgSend(objc.Object, "uiViewForAudioUnit:withSize:", .{ au_unit, ns_size });
     if (view.value == null) return null;
