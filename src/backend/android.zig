@@ -168,7 +168,10 @@ fn onAppCmd(a: *App, cmd_raw: i32) callconv(.c) void {
                 sendConfigure(v);
             }
         },
-        .term_window => destroySurface(),
+        .term_window => {
+            destroySurface();
+            if (current_view) |v| v.handle = null;
+        },
         .window_resized, .config_changed, .content_rect_changed, .window_redraw_needed => if (current_view) |v| sendConfigure(v),
         .gained_focus => if (current_view) |v| {
             _ = common.dispatchEvent(v, &.{ .focus_in = .{ .mode = .normal } });
@@ -426,7 +429,6 @@ pub fn update(world: *root.World, timeout: f64) root.Status {
             src.process(a, src);
         }
     }
-    while (a.window == null and !destroyed and a.destroy_requested == 0) pollOnce(-1);
     if (a.window) |window| if (current_view) |v| {
         if (ANativeWindow_getWidth(window) != last_size[0] or ANativeWindow_getHeight(window) != last_size[1]) sendConfigure(v);
     };
