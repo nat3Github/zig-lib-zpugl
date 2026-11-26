@@ -336,7 +336,6 @@ pub const GLX_CONTEXT_CORE_PROFILE_BIT_ARB = 0x00000001;
 pub const GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB = 0x00000002;
 pub const GLX_CONTEXT_FLAGS_ARB = 0x2094;
 pub const GLX_CONTEXT_DEBUG_BIT_ARB = 0x0001;
-pub const GLX_NONE = 0x8000;
 
 pub const PFNGLXCREATECONTEXTATTRIBSARBPROC = *const fn (
     display: *Display,
@@ -702,10 +701,6 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
                 .style = view.style,
             } };
             _ = common.dispatchEvent(view, &ev);
-            // Resize GL context if needed
-            if (view.gl_context != 0) {
-                _ = glXMakeCurrent(display, win_id, @ptrFromInt(view.gl_context));
-            }
         },
         ButtonPress, ButtonRelease => {
             if (xev.type == ButtonPress and xev.button.button <= 3 and view.parent != 0) {

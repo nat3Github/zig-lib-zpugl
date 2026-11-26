@@ -319,16 +319,16 @@ fn x11_gl_create(view: *root.View, major: i32, minor: i32, profile: i32, double_
 
     // Choose FB config
     var attribs = [_]c_int{
-        x11_mod.GLX_RENDER_TYPE,                                        x11_mod.GLX_RGBA_BIT,
-        x11_mod.GLX_DRAWABLE_TYPE,                                      x11_mod.GLX_WINDOW_BIT,
-        x11_mod.GLX_RED_SIZE,                                           8,
-        x11_mod.GLX_GREEN_SIZE,                                         8,
-        x11_mod.GLX_BLUE_SIZE,                                          8,
-        x11_mod.GLX_ALPHA_SIZE,                                         8,
-        x11_mod.GLX_DEPTH_SIZE,                                         24,
-        x11_mod.GLX_STENCIL_SIZE,                                       8,
-        if (double_buf) x11_mod.GLX_DOUBLEBUFFER else x11_mod.GLX_NONE, 1,
-        x11_mod.GLX_NONE,
+        x11_mod.GLX_RENDER_TYPE,   x11_mod.GLX_RGBA_BIT,
+        x11_mod.GLX_DRAWABLE_TYPE, x11_mod.GLX_WINDOW_BIT,
+        x11_mod.GLX_RED_SIZE,      8,
+        x11_mod.GLX_GREEN_SIZE,    8,
+        x11_mod.GLX_BLUE_SIZE,     8,
+        x11_mod.GLX_ALPHA_SIZE,    8,
+        x11_mod.GLX_DEPTH_SIZE,    24,
+        x11_mod.GLX_STENCIL_SIZE,  8,
+        x11_mod.GLX_DOUBLEBUFFER,  @intFromBool(double_buf),
+        0,
     };
 
     var n_configs: c_int = 0;
@@ -344,15 +344,15 @@ fn x11_gl_create(view: *root.View, major: i32, minor: i32, profile: i32, double_
         if (major > 0) {
             const proc = x11_mod.glXGetProcAddress("glXCreateContextAttribsARB") orelse break :blk null;
             const fn_ptr: x11_mod.PFNGLXCREATECONTEXTATTRIBSARBPROC = @ptrCast(proc);
-            const profile_bit: c_int = if (profile == 1)
+            const profile_bit: c_int = if (profile == @backingInt(root.ViewHintValue.opengl_core_profile))
                 x11_mod.GLX_CONTEXT_CORE_PROFILE_BIT_ARB
             else
                 x11_mod.GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB;
             const ctx_attribs = [_]c_int{
                 x11_mod.GLX_CONTEXT_MAJOR_VERSION_ARB, major,
-                x11_mod.GLX_CONTEXT_MINOR_VERSION_ARB, minor,
+                x11_mod.GLX_CONTEXT_MINOR_VERSION_ARB, @max(minor, 0),
                 x11_mod.GLX_CONTEXT_PROFILE_MASK_ARB,  profile_bit,
-                x11_mod.GLX_NONE,
+                0,
             };
             break :blk fn_ptr(display, config, null, 1, &ctx_attribs);
         }
@@ -392,8 +392,8 @@ fn x11_gl_create_legacy(view: *root.View, display: *x11.Display, screen: c_int, 
         8,
         x11_mod.GLX_DEPTH_SIZE,
         24,
-        if (double_buf) x11_mod.GLX_DOUBLEBUFFER else x11_mod.GLX_NONE,
-        x11_mod.GLX_NONE,
+        if (double_buf) x11_mod.GLX_DOUBLEBUFFER else 0,
+        0,
     };
     const vi = x11_mod.glXChooseVisual(display, screen, &attribs) orelse {
         std.debug.print("[x11_gl_create_legacy] glXChooseVisual returned null\n", .{});
