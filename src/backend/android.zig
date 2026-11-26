@@ -82,6 +82,7 @@ extern fn AMotionEvent_getAxisValue(event: *const AInputEvent, axis: i32, pointe
 extern fn AKeyEvent_getAction(event: *const AInputEvent) i32;
 extern fn AKeyEvent_getKeyCode(event: *const AInputEvent) i32;
 extern fn AKeyEvent_getMetaState(event: *const AInputEvent) i32;
+extern fn ALooper_wake(looper: *ALooper) void;
 
 const EGLDisplay = ?*anyopaque;
 const EGLConfig = ?*anyopaque;
@@ -101,6 +102,9 @@ extern fn eglSwapInterval(dpy: EGLDisplay, interval: i32) u32;
 
 const EGL_NONE = 0x3038;
 
+/// Set in android_main before creating a world. With `zpugl.ZpuglActivity` (android/zpugl/ZpuglActivity.java) as the
+/// activity, the soft keyboard types any text, composing text included; with a plain NativeActivity only keys from the
+/// key character map arrive.
 pub var app: ?*App = null;
 
 const Egl = struct {
@@ -116,6 +120,131 @@ var last_size: [2]i32 = .{ 0, 0 };
 var client_queue: std.ArrayList([2]usize) = .empty;
 var redraw_pending = false;
 var destroyed = false;
+var text_input_method: jni.Id = null;
+var edit_lock: std.c.pthread_mutex_t = .{};
+var edits: std.ArrayList(u8) = .empty;
+var dispatching_edits = false;
+
+const jni = struct {
+    const Table = [*]const ?*const anyopaque;
+    const Env = *const Table;
+    const Vm = *const Table;
+    const Obj = ?*anyopaque;
+    const Id = ?*anyopaque;
+    const Value = extern union { z: u8, i: i32, l: Obj };
+    const NativeMethod = extern struct { name: [*:0]const u8, signature: [*:0]const u8, func: *const anyopaque };
+    const version_1_6 = 0x10006;
+
+    fn f(env: Env, comptime i: usize, comptime T: type) T {
+        return @ptrCast(@alignCast(env.*[i].?));
+    }
+
+    fn vmFn(vm: Vm, comptime i: usize, comptime T: type) T {
+        return @ptrCast(@alignCast(vm.*[i].?));
+    }
+
+    const Session = struct { env: Env, attached: bool };
+
+    fn begin() Session {
+        const vm: Vm = @ptrCast(@alignCast(theApp().activity.vm.?));
+        var env: ?Env = null;
+        if (vmFn(vm, 6, *const fn (Vm, *?Env, i32) callconv(.c) i32)(vm, &env, version_1_6) == 0) return .{ .env = env.?, .attached = false };
+        std.debug.assert(vmFn(vm, 4, *const fn (Vm, *?Env, ?*anyopaque) callconv(.c) i32)(vm, &env, null) == 0);
+        return .{ .env = env.?, .attached = true };
+    }
+
+    fn end(s: Session) void {
+        if (!s.attached) return;
+        const vm: Vm = @ptrCast(@alignCast(theApp().activity.vm.?));
+        std.debug.assert(vmFn(vm, 5, *const fn (Vm) callconv(.c) i32)(vm) == 0);
+    }
+
+    fn clearException(env: Env) void {
+        if (f(env, 228, *const fn (Env) callconv(.c) u8)(env) != 0) f(env, 17, *const fn (Env) callconv(.c) void)(env);
+    }
+};
+
+fn bindJava() void {
+    const s = jni.begin();
+    defer jni.end(s);
+    const env = s.env;
+    std.debug.assert(jni.f(env, 19, *const fn (jni.Env, i32) callconv(.c) i32)(env, 8) == 0);
+    defer _ = jni.f(env, 20, *const fn (jni.Env, jni.Obj) callconv(.c) jni.Obj)(env, null);
+    var cls = jni.f(env, 31, *const fn (jni.Env, jni.Obj) callconv(.c) jni.Obj)(env, theApp().activity.clazz);
+    text_input_method = jni.f(env, 33, *const fn (jni.Env, jni.Obj, [*:0]const u8, [*:0]const u8) callconv(.c) jni.Id)(env, cls, "zpuglTextInput", "(Z)V");
+    if (text_input_method == null) return jni.clearException(env);
+    const methods = [_]jni.NativeMethod{.{ .name = "zpuglEdit", .signature = "(I[B)V", .func = &javaEdit }};
+    const register = jni.f(env, 215, *const fn (jni.Env, jni.Obj, [*]const jni.NativeMethod, i32) callconv(.c) i32);
+    while (register(env, cls, &methods, methods.len) != 0) {
+        jni.clearException(env);
+        cls = jni.f(env, 10, *const fn (jni.Env, jni.Obj) callconv(.c) jni.Obj)(env, cls);
+        std.debug.assert(cls != null);
+    }
+}
+
+fn javaTextInput(on: bool) bool {
+    const method = text_input_method orelse return false;
+    const s = jni.begin();
+    defer jni.end(s);
+    const args = [_]jni.Value{.{ .z = @intFromBool(on) }};
+    jni.f(s.env, 63, *const fn (jni.Env, jni.Obj, jni.Id, [*]const jni.Value) callconv(.c) void)(s.env, theApp().activity.clazz, method, &args);
+    jni.clearException(s.env);
+    return true;
+}
+
+fn javaEdit(env: jni.Env, _: jni.Obj, backspaces: i32, text: jni.Obj) callconv(.c) void {
+    std.debug.assert(backspaces >= 0);
+    const len = jni.f(env, 171, *const fn (jni.Env, jni.Obj) callconv(.c) i32)(env, text);
+    _ = std.c.pthread_mutex_lock(&edit_lock);
+    defer _ = std.c.pthread_mutex_unlock(&edit_lock);
+    edits.ensureUnusedCapacity(std.heap.c_allocator, @intCast(backspaces + len)) catch @panic("zpugl android: out of memory for text input");
+    edits.appendNTimesAssumeCapacity(8, @intCast(backspaces));
+    jni.f(env, 200, *const fn (jni.Env, jni.Obj, i32, i32, [*]u8) callconv(.c) void)(env, text, 0, len, edits.items.ptr + edits.items.len);
+    edits.items.len += @intCast(len);
+    if (app) |a| if (a.looper) |l| ALooper_wake(l);
+}
+
+fn nextEdit(buf: *[4]u8) ?[]const u8 {
+    _ = std.c.pthread_mutex_lock(&edit_lock);
+    defer _ = std.c.pthread_mutex_unlock(&edit_lock);
+    if (edits.items.len == 0) return null;
+    const n = std.unicode.utf8ByteSequenceLength(edits.items[0]) catch unreachable;
+    std.debug.assert(n <= edits.items.len);
+    @memcpy(buf[0..n], edits.items[0..n]);
+    edits.replaceRangeAssumeCapacity(0, n, &.{});
+    return buf[0..n];
+}
+
+fn dropEdits() void {
+    _ = std.c.pthread_mutex_lock(&edit_lock);
+    edits.clearRetainingCapacity();
+    _ = std.c.pthread_mutex_unlock(&edit_lock);
+}
+
+fn keyTap(view: *root.View, key: root.Key, t: f64) void {
+    const ke: root.KeyEvent = .{ .time = t, .x = 0, .y = 0, .root_x = 0, .root_y = 0, .state = .{}, .keycode = 0, .key = @backingInt(key) };
+    _ = common.dispatchEvent(view, &.{ .key_press = ke });
+    _ = common.dispatchEvent(view, &.{ .key_release = ke });
+}
+
+fn dispatchEdits(view: *root.View) void {
+    if (dispatching_edits) return;
+    dispatching_edits = true;
+    defer dispatching_edits = false;
+    var buf: [4]u8 = undefined;
+    while (nextEdit(&buf)) |cp| {
+        const t = @as(f64, @floatFromInt(nowNs())) / std.time.ns_per_s;
+        switch (cp[0]) {
+            8 => keyTap(view, .backspace, t),
+            '\n' => keyTap(view, .enter, t),
+            else => {
+                var tev: root.TextEvent = .{ .time = t, .x = 0, .y = 0, .root_x = 0, .root_y = 0, .state = .{}, .keycode = 0, .character = std.unicode.utf8Decode(cp) catch unreachable, .string = @splat(0) };
+                @memcpy(tev.string[0..cp.len], cp);
+                _ = common.dispatchEvent(view, &.{ .text = tev });
+            },
+        }
+    }
+}
 
 fn theApp() *App {
     return app orelse @panic("zpugl android: set backend_impl.app in android_main before creating a world");
@@ -340,6 +469,7 @@ pub fn createView(view: *root.View) root.Status {
     last_size = .{ 0, 0 };
     a.on_app_cmd = onAppCmd;
     a.on_input_event = onInputEvent;
+    bindJava();
     while (a.window == null) {
         if (a.destroy_requested != 0) {
             current_view = null;
@@ -356,6 +486,7 @@ pub fn destroyView(view: *root.View) void {
         current_view = null;
         client_queue.clearRetainingCapacity();
         redraw_pending = false;
+        dropEdits();
     }
     view.handle = null;
 }
@@ -432,6 +563,7 @@ pub fn update(world: *root.World, timeout: f64) root.Status {
     if (a.window) |window| if (current_view) |v| {
         if (ANativeWindow_getWidth(window) != last_size[0] or ANativeWindow_getHeight(window) != last_size[1]) sendConfigure(v);
     };
+    if (current_view) |v| dispatchEdits(v) else dropEdits();
     var n = client_queue.items.len;
     while (n > 0 and client_queue.items.len > 0) : (n -= 1) {
         const d = client_queue.orderedRemove(0);
@@ -504,6 +636,10 @@ pub fn setCursor(view: *root.View, cursor: root.Cursor) root.Status {
 pub fn deinitWorld(world: *root.World) void {
     client_queue.deinit(world.allocator);
     client_queue = .empty;
+    _ = std.c.pthread_mutex_lock(&edit_lock);
+    edits.deinit(std.heap.c_allocator);
+    edits = .empty;
+    _ = std.c.pthread_mutex_unlock(&edit_lock);
 }
 
 pub fn getNativeWorld(world: *root.World) ?*anyopaque {
@@ -573,13 +709,13 @@ pub fn getClipboard(view: *root.View, clipboard: root.Clipboard, type_index: u32
 
 pub fn startTextInput(view: *root.View, rect: root.TextInputRect) root.Status {
     _ = .{ view, rect };
-    ANativeActivity_showSoftInput(theApp().activity, 0);
+    if (!javaTextInput(true)) ANativeActivity_showSoftInput(theApp().activity, 0);
     return .success;
 }
 
 pub fn stopTextInput(view: *root.View) root.Status {
     _ = view;
-    ANativeActivity_hideSoftInput(theApp().activity, 0);
+    if (!javaTextInput(false)) ANativeActivity_hideSoftInput(theApp().activity, 0);
     return .success;
 }
 
