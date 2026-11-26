@@ -473,7 +473,6 @@ const ClipboardState = struct {
     owned_mime: ?[]u8 = null,
     owned_data: ?[]u8 = null,
     // Receiving (paste in flight)
-    recv_view: ?*root.View = null,
     recv_targets: std.ArrayListUnmanaged(Atom) = .empty,
     recv_type_strs: std.ArrayListUnmanaged([]u8) = .empty,
     recv_buf: std.ArrayListUnmanaged(u8) = .empty,
@@ -937,7 +936,7 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
             handleSelectionRequest(world, impl, &xev.selection_request);
         },
         SelectionNotify_ev => {
-            handleSelectionNotify(world, impl, &xev.selection);
+            handleSelectionNotify(world, impl, view, &xev.selection);
         },
         else => {},
     }
@@ -994,14 +993,13 @@ fn handleSelectionRequest(world: *root.World, impl: *WorldImpl, req: *XSelection
     _ = XFlush(impl.display);
 }
 
-fn handleSelectionNotify(world: *root.World, impl: *WorldImpl, ev: *XSelectionEvent_t) void {
+fn handleSelectionNotify(world: *root.World, impl: *WorldImpl, view: *root.View, ev: *XSelectionEvent_t) void {
     // Xdnd drop reply: selection == XdndSelection
     if (ev.selection == impl.a_xdnd_selection) {
         handleXdndSelection(world, impl, ev);
         return;
     }
     const cb = &impl.clipboard;
-    const view = cb.recv_view orelse return;
     if (ev.property == 0) return; // refused
 
     var actual_type: Atom = 0;
@@ -1887,7 +1885,6 @@ pub fn registerDropType(view: *root.View, mime_type: []const u8) root.Status {
 pub fn paste(view: *root.View) root.Status {
     const impl = getWorldImpl(view.world) orelse return .bad_call;
     const win: Window = @intFromPtr(view.handle orelse return .bad_call);
-    impl.clipboard.recv_view = view;
     impl.clipboard.accepted_target = 0;
     _ = XConvertSelection(impl.display, impl.a_clipboard, impl.a_targets, impl.a_zpugl_sel, win, CurrentTime);
     _ = XFlush(impl.display);
@@ -1939,8 +1936,7 @@ pub fn rejectOffer(view: *root.View, offer: *const root.DataOfferEvent, rx: i32,
     _ = ry;
     _ = rw;
     _ = rh;
-    const impl = getWorldImpl(view.world) orelse return .bad_call;
-    impl.clipboard.recv_view = null;
+    _ = getWorldImpl(view.world) orelse return .bad_call;
     return .success;
 }
 
