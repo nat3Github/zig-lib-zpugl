@@ -612,10 +612,11 @@ fn feedEvents(self: *Core) void {
         while (ti < tq.len and tq[ti].at <= queued) : (ti += 1) _ = win.addEventText(.{ .text = tq[ti].bytes[0..tq[ti].len] }) catch {};
         switch (ev.evt) {
             .mouse => |m| if (m.button.touch()) {
-                const n: dvui.Point = .{ .x = m.p.x / self.size.w, .y = m.p.y / self.size.h };
+                const px = if (win.rect_pixels.w > 0 and win.rect_pixels.h > 0) win.rect_pixels.size() else self.size;
+                const n: dvui.Point = .{ .x = m.p.x / px.w, .y = m.p.y / px.h };
                 switch (m.action) {
                     .press, .release => _ = win.addEventPointer(.{ .button = m.button, .action = m.action, .xynorm = n }) catch {},
-                    .motion => |d| _ = win.addEventTouchMotion(m.button, n.x, n.y, d.x / self.size.w, d.y / self.size.h) catch {},
+                    .motion => |d| _ = win.addEventTouchMotion(m.button, n.x, n.y, d.x / px.w, d.y / px.h) catch {},
                     else => {},
                 }
             } else switch (m.action) {
