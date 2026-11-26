@@ -259,6 +259,9 @@ pub extern "user32" fn SetWindowPos(hWnd: HWND, hWndInsertAfter: HWND, x: c_int,
 pub extern "user32" fn GetWindowRect(hWnd: HWND, lpRect: *RECT) callconv(.winapi) BOOL;
 pub extern "user32" fn MonitorFromRect(lprc: *const RECT, dwFlags: DWORD) callconv(.winapi) ?*anyopaque;
 pub extern "user32" fn IsIconic(hWnd: HWND) callconv(.winapi) BOOL;
+extern "user32" fn IsWindowVisible(hWnd: HWND) callconv(.winapi) BOOL;
+extern "user32" fn GetAncestor(hWnd: HWND, flags: UINT) callconv(.winapi) ?HWND;
+const GA_ROOT: UINT = 2;
 pub extern "user32" fn GetClientRect(hWnd: HWND, lpRect: *RECT) callconv(.winapi) BOOL;
 pub extern "user32" fn InvalidateRect(hWnd: HWND, lpRect: ?*const RECT, bErase: BOOL) callconv(.winapi) BOOL;
 pub extern "user32" fn BeginPaint(hWnd: HWND, lpPaint: *anyopaque) callconv(.winapi) HDC;
@@ -1321,6 +1324,17 @@ pub fn setViewStyle(view: *root.View, flags: root.ViewStyleFlags) root.Status {
     if (flags.hidden != (IsIconic(hwnd) != 0)) _ = ShowWindow(hwnd, if (flags.hidden) SW_SHOWMINIMIZED else SW_RESTORE);
     view.style = common.keepState(view.style, flags);
     return .success;
+}
+
+extern "dwmapi" fn DwmGetWindowAttribute(hwnd: HWND, attribute: DWORD, value: *anyopaque, size: DWORD) callconv(.winapi) i32;
+const DWMWA_CLOAKED: DWORD = 14;
+
+pub fn isOccluded(view: *root.View) bool {
+    const own = view.handle orelse return false;
+    const hwnd = GetAncestor(own, GA_ROOT) orelse own;
+    if (IsIconic(hwnd) != 0 or IsWindowVisible(hwnd) == 0) return true;
+    var cloaked: DWORD = 0;
+    return DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, @sizeOf(DWORD)) == 0 and cloaked != 0;
 }
 
 pub fn obscureView(view: *root.View) root.Status {

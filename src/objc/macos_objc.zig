@@ -237,6 +237,25 @@ fn impWindowStateChanged(self: c.id, _: c.SEL, _: c.id) callconv(.c) void {
     sendConfigure(self, false);
 }
 
+fn impOcclusionChanged(self: c.id, _: c.SEL, note: c.id) callconv(.c) void {
+    const win = objFromId(self).msgSend(c.id, "window", .{}) orelse return;
+    if (objFromId(note).msgSend(c.id, "object", .{}) != win) return;
+    sendConfigure(self, false);
+}
+
+fn occlusionName() objc.Object {
+    return nsClass("NSString").msgSend(objc.Object, "stringWithUTF8String:", .{@as([*:0]const u8, "NSWindowDidChangeOcclusionStateNotification")});
+}
+
+const NSWindowOcclusionStateVisible: NSUInteger = 1 << 1;
+
+export fn zpugl_mac_is_occluded(native: usize) bool {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
+    const win = viewWindow(native) orelse return false;
+    return win.msgSend(NSUInteger, "occlusionState", .{}) & NSWindowOcclusionStateVisible == 0;
+}
+
 fn buttonImpl(self: c.id, event: c.id, press: bool, btn: u32) void {
     const ev = objFromId(event);
     const win_pt = ev.msgSend(NSPoint, "locationInWindow", .{});
@@ -797,6 +816,7 @@ fn ensureViewClass() objc.Class {
     std.debug.assert(cls.addMethod("windowShouldClose:", impWindowShouldClose));
     std.debug.assert(cls.addMethod("windowDidMiniaturize:", impWindowStateChanged));
     std.debug.assert(cls.addMethod("windowDidDeminiaturize:", impWindowStateChanged));
+    std.debug.assert(cls.addMethod("zpuglOcclusionChanged:", impOcclusionChanged));
     std.debug.assert(cls.addMethod("drawRect:", impDrawRect));
     std.debug.assert(cls.addMethod("setFrameSize:", impSetFrameSize));
     std.debug.assert(cls.addMethod("mouseDown:", impMouseDown));
@@ -1063,6 +1083,7 @@ export fn zpugl_mac_realized(native: usize, view_ptr: *anyopaque) void {
     defer pool.deinit();
     const view = objFromId(@ptrFromInt(native));
     setIvarPtr(view.value, view_ptr);
+    nsClass("NSNotificationCenter").msgSend(objc.Object, "defaultCenter", .{}).msgSend(void, "addObserver:selector:name:object:", .{ view, objc.sel("zpuglOcclusionChanged:"), occlusionName(), @as(c.id, null) });
     sendConfigure(view.value, false);
 }
 
@@ -1072,6 +1093,7 @@ export fn zpugl_mac_destroy_view(native: usize) void {
     if (native == 0) return;
     const view: objc.Object = .{ .value = @ptrFromInt(native) };
     if (ivarPtr(view.value)) |p| stopViewTimers(@intFromPtr(p));
+    nsClass("NSNotificationCenter").msgSend(objc.Object, "defaultCenter", .{}).msgSend(void, "removeObserver:", .{view});
     zpugl_mac_stop_text_input(native);
     const win_id = view.msgSend(c.id, "window", .{});
     var owned_window: ?objc.Object = null;

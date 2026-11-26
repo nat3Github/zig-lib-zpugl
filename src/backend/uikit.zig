@@ -259,6 +259,7 @@ fn setWorldVisible(visible: bool) void {
     for (world.views.items) |view| {
         if (view.handle == null) continue;
         view.visible = visible;
+        common.dispatchOccluded(view, !visible);
         if (visible) {
             dispatch(view, .{ .focus_in = .{ .mode = .normal } });
             dispatch(view, .{ .expose = .{ .x = 0, .y = 0, .width = 0, .height = 0 } });

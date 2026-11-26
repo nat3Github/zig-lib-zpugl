@@ -298,6 +298,12 @@ pub fn getScaleFactor(view: *root.View) f64 {
     return zpugl_mac_get_scale_factor(@intFromPtr(view.handle));
 }
 
+pub extern fn zpugl_mac_is_occluded(native: usize) bool;
+
+pub fn isOccluded(view: *root.View) bool {
+    return zpugl_mac_is_occluded(@intFromPtr(view.handle orelse return false));
+}
+
 pub fn obscureView(view: *root.View) root.Status {
     const native = @intFromPtr(view.handle orelse return .bad_call);
     zpugl_mac_obscure_view(native);

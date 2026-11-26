@@ -608,6 +608,7 @@ pub const View = struct {
     strings: [string_hint_count]?[]u8 = @splat(null),
     style: ViewStyleFlags = .{},
     last_configure: ConfigureEvent = .{ .x = 0, .y = 0, .width = 0, .height = 0, .style = .{} },
+    occluded: bool = false,
     visible: bool = false,
     gl_context: usize = 0,
     impl: ?*anyopaque = null, // backend-private state (e.g. win32 ViewImpl)
@@ -811,6 +812,16 @@ pub const View = struct {
         return self.style;
     }
 
+    /// zpugl extension, pugl has no equivalent. True when no part of the window is on screen: covered by other windows,
+    /// on another space or desktop, display off, minimized, hidden, or the app in the background. A view with a parent
+    /// reports the state of the host window. A change arrives as a configure event; read the state there.
+    /// macOS uses the window occlusion state, X11 VisibilityNotify and mapping, iOS and Android background and
+    /// foreground. Win32 reads minimization and DWMWA_CLOAKED (another virtual desktop) at the call; cloaking sends no
+    /// configure, and a window covered by other windows reads false. Where the state is unknown the result is false.
+    pub fn isOccluded(self: *View) bool {
+        return if (@hasDecl(backend, "isOccluded")) backend.isOccluded(self) else self.occluded;
+    }
+
     pub fn getVisible(self: *View) bool {
         return self.visible;
     }
@@ -977,6 +988,16 @@ pub const common = struct {
         if (view.style.mapped == mapped and view.style.hidden == hidden) return;
         view.style.mapped = mapped;
         view.style.hidden = hidden;
+        reconfigure(view);
+    }
+
+    pub fn dispatchOccluded(view: *View, occluded: bool) void {
+        if (view.occluded == occluded) return;
+        view.occluded = occluded;
+        reconfigure(view);
+    }
+
+    pub fn reconfigure(view: *View) void {
         var ev = view.last_configure;
         const size = view.size_hints[@backingInt(SizeHint.current_size)];
         ev.width = size.width;

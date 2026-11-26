@@ -33,6 +33,8 @@ const SelectionRequest_ev = 30;
 const SelectionNotify_ev = 31;
 const PropertyNotify_ev = 28;
 const UnmapNotify = 18;
+const VisibilityNotify = 15;
+const VisibilityFullyObscured = 2;
 const MapNotify = 19;
 
 // Event masks
@@ -45,6 +47,7 @@ const LeaveWindowMask: c_long = 1 << 5;
 const PointerMotionMask: c_long = 1 << 6;
 const ExposureMask: c_long = 1 << 15;
 const StructureNotifyMask: c_long = 1 << 17;
+const VisibilityChangeMask: c_long = 1 << 16;
 const FocusChangeMask: c_long = 1 << 21;
 const PropertyChangeMask: c_long = 1 << 22;
 const PropModeReplace: c_int = 0;
@@ -152,6 +155,15 @@ const XCrossingEvent_t = extern struct {
     same_screen: Bool_x,
     focus: Bool_x,
     state: c_uint,
+};
+
+const XVisibilityEvent_t = extern struct {
+    type: c_int,
+    serial: c_ulong,
+    send_event: Bool_x,
+    display: *Display,
+    window: Window,
+    state: c_int,
 };
 
 const XExposeEvent_t = extern struct {
@@ -271,6 +283,7 @@ pub const XEvent = extern union {
     selection: XSelectionEvent_t,
     selection_clear: XSelectionClearEvent_t,
     property: XPropertyEvent_t,
+    visibility: XVisibilityEvent_t,
     pad: [24]c_long,
 };
 
@@ -929,6 +942,7 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
             }
         },
         MapNotify, UnmapNotify => common.dispatchStyle(view, xev.type == MapNotify, view.style.hidden),
+        VisibilityNotify => common.dispatchOccluded(view, xev.visibility.state == VisibilityFullyObscured),
         PropertyNotify_ev => if (xev.property.atom == impl.a_net_wm_state) common.dispatchStyle(view, view.style.mapped, hasState(impl, @intCast(win_id), impl.a_net_wm_state_hidden)),
         SelectionClear_ev => {
             // Lost ownership: free owned data
@@ -1486,7 +1500,7 @@ pub fn createView(view: *root.View) root.Status {
     _ = XSelectInput(display, win, KeyPressMask | KeyReleaseMask |
         ButtonPressMask | ButtonReleaseMask |
         EnterWindowMask | LeaveWindowMask |
-        PointerMotionMask | ExposureMask |
+        PointerMotionMask | ExposureMask | VisibilityChangeMask |
         StructureNotifyMask | FocusChangeMask | PropertyChangeMask);
 
     // WM close button
@@ -1663,6 +1677,10 @@ pub fn applySizeHints(view: *root.View) root.Status {
 pub fn getScaleFactor(view: *root.View) f64 {
     _ = view;
     return 1.0; // X11 DPI scaling is app-managed; return 1 as baseline
+}
+
+pub fn isOccluded(view: *root.View) bool {
+    return view.occluded or (view.handle != null and !view.style.mapped);
 }
 
 fn hasState(impl: *WorldImpl, win: Window, atom: Atom) bool {

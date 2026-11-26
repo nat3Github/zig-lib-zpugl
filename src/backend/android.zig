@@ -336,6 +336,9 @@ fn onAppCmd(a: *App, cmd_raw: i32) callconv(.c) void {
         .lost_focus => if (current_view) |v| {
             _ = common.dispatchEvent(v, &.{ .focus_out = .{ .mode = .normal } });
         },
+        .start, .stop => if (current_view) |v| {
+            if (v.handle != null) common.dispatchOccluded(v, cmd == .stop) else v.occluded = cmd == .stop;
+        },
         .destroy => {
             destroyed = true;
             if (current_view) |v| _ = common.dispatchSimpleEvent(v, .close);
