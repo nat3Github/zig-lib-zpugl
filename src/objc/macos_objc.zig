@@ -364,7 +364,8 @@ fn impKeyDown(self: c.id, _: c.SEL, event: c.id) callconv(.c) void {
         _ = (objc.Object{ .value = ctx_id }).msgSend(bool, "handleEvent:", .{ev});
         return;
     }
-    if (k.has_text) zpugl_on_text(zp, time, 0, 0, keycode, k.ch, k.utf8, modsFromFlags(flags));
+    const command = flags & NSEventModifierFlagCommand != 0 or (flags & NSEventModifierFlagControl != 0 and flags & NSEventModifierFlagOption == 0);
+    if (k.has_text and !command) zpugl_on_text(zp, time, 0, 0, keycode, k.ch, k.utf8, modsFromFlags(flags));
 }
 
 fn impKeyUp(self: c.id, _: c.SEL, event: c.id) callconv(.c) void {
