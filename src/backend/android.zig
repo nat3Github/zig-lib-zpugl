@@ -117,11 +117,13 @@ const Egl = struct {
 var egl: Egl = .{};
 var current_view: ?*root.View = null;
 var last_size: [2]i32 = .{ 0, 0 };
+var last_insets: root.Insets = .{};
+var insets: root.Insets = .{};
 var client_queue: std.ArrayList([2]usize) = .empty;
 var redraw_pending = false;
 var destroyed = false;
 var text_input_method: jni.Id = null;
-var edit_lock: std.c.pthread_mutex_t = .{};
+var java_lock: std.c.pthread_mutex_t = .{};
 var edits: std.ArrayList(u8) = .empty;
 var dispatching_edits = false;
 
@@ -173,13 +175,37 @@ fn bindJava() void {
     var cls = jni.f(env, 31, *const fn (jni.Env, jni.Obj) callconv(.c) jni.Obj)(env, theApp().activity.clazz);
     text_input_method = jni.f(env, 33, *const fn (jni.Env, jni.Obj, [*:0]const u8, [*:0]const u8) callconv(.c) jni.Id)(env, cls, "zpuglTextInput", "(Z)V");
     if (text_input_method == null) return jni.clearException(env);
-    const methods = [_]jni.NativeMethod{.{ .name = "zpuglEdit", .signature = "(I[B)V", .func = &javaEdit }};
+    const bind = jni.f(env, 33, *const fn (jni.Env, jni.Obj, [*:0]const u8, [*:0]const u8) callconv(.c) jni.Id)(env, cls, "zpuglBind", "()V");
+    std.debug.assert(bind != null);
+    const methods = [_]jni.NativeMethod{
+        .{ .name = "zpuglEdit", .signature = "(I[B)V", .func = &javaEdit },
+        .{ .name = "zpuglInsets", .signature = "(IIII)V", .func = &javaInsets },
+    };
     const register = jni.f(env, 215, *const fn (jni.Env, jni.Obj, [*]const jni.NativeMethod, i32) callconv(.c) i32);
     while (register(env, cls, &methods, methods.len) != 0) {
         jni.clearException(env);
         cls = jni.f(env, 10, *const fn (jni.Env, jni.Obj) callconv(.c) jni.Obj)(env, cls);
         std.debug.assert(cls != null);
     }
+    jni.f(env, 63, *const fn (jni.Env, jni.Obj, jni.Id, ?[*]const jni.Value) callconv(.c) void)(env, theApp().activity.clazz, bind, null);
+    jni.clearException(env);
+}
+
+fn javaInsets(_: jni.Env, _: jni.Obj, left: i32, top: i32, right: i32, bottom: i32) callconv(.c) void {
+    _ = std.c.pthread_mutex_lock(&java_lock);
+    defer _ = std.c.pthread_mutex_unlock(&java_lock);
+    insets = .{ .left = clampSpan(left), .top = clampSpan(top), .right = clampSpan(right), .bottom = clampSpan(bottom) };
+    if (app) |a| if (a.looper) |l| ALooper_wake(l);
+}
+
+fn clampSpan(v: i32) u16 {
+    return @intCast(std.math.clamp(v, 0, std.math.maxInt(u16)));
+}
+
+fn currentInsets() root.Insets {
+    _ = std.c.pthread_mutex_lock(&java_lock);
+    defer _ = std.c.pthread_mutex_unlock(&java_lock);
+    return insets;
 }
 
 fn javaTextInput(on: bool) bool {
@@ -195,8 +221,8 @@ fn javaTextInput(on: bool) bool {
 fn javaEdit(env: jni.Env, _: jni.Obj, backspaces: i32, text: jni.Obj) callconv(.c) void {
     std.debug.assert(backspaces >= 0);
     const len = jni.f(env, 171, *const fn (jni.Env, jni.Obj) callconv(.c) i32)(env, text);
-    _ = std.c.pthread_mutex_lock(&edit_lock);
-    defer _ = std.c.pthread_mutex_unlock(&edit_lock);
+    _ = std.c.pthread_mutex_lock(&java_lock);
+    defer _ = std.c.pthread_mutex_unlock(&java_lock);
     edits.ensureUnusedCapacity(std.heap.c_allocator, @intCast(backspaces + len)) catch @panic("zpugl android: out of memory for text input");
     edits.appendNTimesAssumeCapacity(8, @intCast(backspaces));
     jni.f(env, 200, *const fn (jni.Env, jni.Obj, i32, i32, [*]u8) callconv(.c) void)(env, text, 0, len, edits.items.ptr + edits.items.len);
@@ -205,8 +231,8 @@ fn javaEdit(env: jni.Env, _: jni.Obj, backspaces: i32, text: jni.Obj) callconv(.
 }
 
 fn nextEdit(buf: *[4]u8) ?[]const u8 {
-    _ = std.c.pthread_mutex_lock(&edit_lock);
-    defer _ = std.c.pthread_mutex_unlock(&edit_lock);
+    _ = std.c.pthread_mutex_lock(&java_lock);
+    defer _ = std.c.pthread_mutex_unlock(&java_lock);
     if (edits.items.len == 0) return null;
     const n = std.unicode.utf8ByteSequenceLength(edits.items[0]) catch unreachable;
     std.debug.assert(n <= edits.items.len);
@@ -216,9 +242,9 @@ fn nextEdit(buf: *[4]u8) ?[]const u8 {
 }
 
 fn dropEdits() void {
-    _ = std.c.pthread_mutex_lock(&edit_lock);
+    _ = std.c.pthread_mutex_lock(&java_lock);
     edits.clearRetainingCapacity();
-    _ = std.c.pthread_mutex_unlock(&edit_lock);
+    _ = std.c.pthread_mutex_unlock(&java_lock);
 }
 
 fn keyTap(view: *root.View, key: root.Key, t: f64) void {
@@ -280,10 +306,12 @@ fn sendConfigure(view: *root.View) void {
     const h = ANativeWindow_getHeight(window);
     if (w <= 0 or h <= 0) return;
     last_size = .{ w, h };
-    const width: u16 = @intCast(@min(w, std.math.maxInt(u16)));
-    const height: u16 = @intCast(@min(h, std.math.maxInt(u16)));
+    last_insets = currentInsets();
+    std.log.info("DIAG configure {d}x{d} insets {any}", .{ w, h, last_insets });
+    const width = clampSpan(w);
+    const height = clampSpan(h);
     view.size_hints[@backingInt(root.SizeHint.current_size)] = .{ .width = width, .height = height };
-    _ = common.dispatchEvent(view, &.{ .configure = .{ .x = 0, .y = 0, .width = width, .height = height, .style = view.style } });
+    _ = common.dispatchEvent(view, &.{ .configure = .{ .x = 0, .y = 0, .width = width, .height = height, .style = view.style, .insets = last_insets } });
     _ = common.dispatchEvent(view, &.{ .expose = .{ .x = 0, .y = 0, .width = width, .height = height } });
 }
 
@@ -561,7 +589,7 @@ pub fn update(world: *root.World, timeout: f64) root.Status {
         }
     }
     if (a.window) |window| if (current_view) |v| {
-        if (ANativeWindow_getWidth(window) != last_size[0] or ANativeWindow_getHeight(window) != last_size[1]) sendConfigure(v);
+        if (ANativeWindow_getWidth(window) != last_size[0] or ANativeWindow_getHeight(window) != last_size[1] or !std.meta.eql(currentInsets(), last_insets)) sendConfigure(v);
     };
     if (current_view) |v| dispatchEdits(v) else dropEdits();
     var n = client_queue.items.len;
@@ -636,10 +664,10 @@ pub fn setCursor(view: *root.View, cursor: root.Cursor) root.Status {
 pub fn deinitWorld(world: *root.World) void {
     client_queue.deinit(world.allocator);
     client_queue = .empty;
-    _ = std.c.pthread_mutex_lock(&edit_lock);
+    _ = std.c.pthread_mutex_lock(&java_lock);
     edits.deinit(std.heap.c_allocator);
     edits = .empty;
-    _ = std.c.pthread_mutex_unlock(&edit_lock);
+    _ = std.c.pthread_mutex_unlock(&java_lock);
 }
 
 pub fn getNativeWorld(world: *root.World) ?*anyopaque {

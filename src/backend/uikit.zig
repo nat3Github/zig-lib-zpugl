@@ -18,6 +18,8 @@ extern "c" const kCFRunLoopDefaultMode: ?*const anyopaque;
 extern "c" fn CACurrentMediaTime() f64;
 extern "c" fn objc_autoreleasePoolPush() ?*anyopaque;
 extern "c" fn objc_autoreleasePoolPop(pool: ?*anyopaque) void;
+extern "c" const UIKeyboardWillChangeFrameNotification: c.id;
+extern "c" const UIKeyboardFrameEndUserInfoKey: c.id;
 
 const kCFRunLoopRunHandledSource: i32 = 4;
 
@@ -34,6 +36,7 @@ var start_time: f64 = 0;
 var touch_slots: [10]c.id = @splat(null);
 var clipboard_buf: std.ArrayList(u8) = .empty;
 var client_queue: std.ArrayList(PendingClient) = .empty;
+var keyboard_frame: CGRect = .{ .origin = .{ .x = 0, .y = 0 }, .size = .{ .width = 0, .height = 0 } };
 
 const PendingClient = struct { view: ?*root.View, data1: usize, data2: usize };
 
@@ -89,30 +92,58 @@ fn impYes(_: c.id, _: c.SEL) callconv(.c) bool {
     return true;
 }
 
+fn span(v: CGFloat) u16 {
+    return @intFromFloat(std.math.clamp(@round(v), 0, std.math.maxInt(u16)));
+}
+
+fn keyboardOverlap(self: objc.Object, b: CGRect) CGFloat {
+    if (keyboard_frame.size.height <= 0) return 0;
+    const window = self.msgSend(c.id, "window", .{}) orelse return 0;
+    const space = obj(window).msgSend(objc.Object, "screen", .{}).msgSend(c.id, "coordinateSpace", .{});
+    const k = self.msgSend(CGRect, "convertRect:fromCoordinateSpace:", .{ keyboard_frame, space });
+    const left = @max(k.origin.x, b.origin.x);
+    const right = @min(k.origin.x + k.size.width, b.origin.x + b.size.width);
+    if (right <= left or k.origin.y + k.size.height <= b.origin.y) return 0;
+    return @max(0, b.origin.y + b.size.height - k.origin.y);
+}
+
 fn impLayoutSubviews(self: c.id, sel: c.SEL) callconv(.c) void {
     _ = sel;
     const view = zigView(self) orelse return;
-    const b = obj(self).msgSend(CGRect, "bounds", .{});
-    const w: u16 = @intFromFloat(@max(0, b.size.width));
-    const h: u16 = @intFromFloat(@max(0, b.size.height));
+    const v = obj(self);
+    const b = v.msgSend(CGRect, "bounds", .{});
+    const safe = v.msgSend(UIEdgeInsets, "safeAreaInsets", .{});
+    const w = span(b.size.width);
+    const h = span(b.size.height);
+    const insets: root.Insets = .{
+        .left = span(safe.left),
+        .top = span(safe.top),
+        .right = span(safe.right),
+        .bottom = span(@max(safe.bottom, keyboardOverlap(v, b))),
+    };
     view.size_hints[@backingInt(root.SizeHint.current_size)] = .{ .width = w, .height = h };
-    dispatch(view, .{ .configure = .{ .x = 0, .y = 0, .width = w, .height = h, .style = view.style } });
+    dispatch(view, .{ .configure = .{ .x = 0, .y = 0, .width = w, .height = h, .style = view.style, .insets = insets } });
     dispatch(view, .{ .expose = .{ .x = 0, .y = 0, .width = w, .height = h } });
+}
+
+fn impKeyboard(self: c.id, _: c.SEL, note: c.id) callconv(.c) void {
+    const info = obj(note).msgSend(objc.Object, "userInfo", .{});
+    const value = info.msgSend(c.id, "objectForKey:", .{UIKeyboardFrameEndUserInfoKey}) orelse return;
+    keyboard_frame = obj(value).msgSend(CGRect, "CGRectValue", .{});
+    obj(self).msgSend(void, "setNeedsLayout", .{});
+}
+
+fn notificationCenter() objc.Object {
+    return cls("NSNotificationCenter").msgSend(objc.Object, "defaultCenter", .{});
 }
 
 fn impContainerLayoutSubviews(self: c.id, _: c.SEL) callconv(.c) void {
     const container = obj(self);
     const b = container.msgSend(CGRect, "bounds", .{});
-    const in = container.msgSend(UIEdgeInsets, "safeAreaInsets", .{});
     const subviews = container.msgSend(objc.Object, "subviews", .{});
     const n = subviews.msgSend(NSUInteger, "count", .{});
     var i: NSUInteger = 0;
-    while (i < n) : (i += 1) {
-        subviews.msgSend(objc.Object, "objectAtIndex:", .{i}).msgSend(void, "setFrame:", .{CGRect{
-            .origin = .{ .x = b.origin.x + in.left, .y = b.origin.y + in.top },
-            .size = .{ .width = b.size.width - in.left - in.right, .height = b.size.height - in.top - in.bottom },
-        }});
-    }
+    while (i < n) : (i += 1) subviews.msgSend(objc.Object, "objectAtIndex:", .{i}).msgSend(void, "setFrame:", .{b});
 }
 
 fn setIvar(self: c.id, name: [:0]const u8, value: c.id) void {
@@ -278,6 +309,8 @@ fn registerClasses() void {
     const meta: objc.Class = .{ .value = c.object_getClass(@ptrCast(@alignCast(v.value))) };
     std.debug.assert(meta.addMethod("layerClass", impLayerClass));
     std.debug.assert(v.addMethod("layoutSubviews", impLayoutSubviews));
+    std.debug.assert(v.addMethod("safeAreaInsetsDidChange", impSetNeedsLayout));
+    std.debug.assert(v.addMethod("zpuglKeyboard:", impKeyboard));
     std.debug.assert(v.addMethod("canBecomeFirstResponder", impYes));
     std.debug.assert(v.addMethod("hasText", impYes));
     std.debug.assert(v.addMethod("insertText:", impInsertText));
@@ -292,7 +325,6 @@ fn registerClasses() void {
 
     const ct = subclass(1, "UIView", "ZpuglUIContainer");
     std.debug.assert(ct.addMethod("layoutSubviews", impContainerLayoutSubviews));
-    std.debug.assert(ct.addMethod("safeAreaInsetsDidChange", impSetNeedsLayout));
     objc.registerClassPair(ct);
     container_class = ct;
 
@@ -339,6 +371,7 @@ pub fn createView(view: *root.View) root.Status {
     const uiview = view_class.?.msgSend(objc.Object, "alloc", .{}).msgSend(objc.Object, "initWithFrame:", .{frame});
     setZigView(uiview.value, view);
     uiview.msgSend(void, "setMultipleTouchEnabled:", .{true});
+    notificationCenter().msgSend(void, "addObserver:selector:name:object:", .{ uiview, objc.sel("zpuglKeyboard:"), UIKeyboardWillChangeFrameNotification, @as(c.id, null) });
 
     if (view.parent != 0) {
         obj(@ptrFromInt(view.parent)).msgSend(void, "addSubview:", .{uiview});
@@ -381,6 +414,7 @@ pub fn destroyView(view: *root.View) void {
         p.view = null;
     };
     setZigView(v.value, null);
+    notificationCenter().msgSend(void, "removeObserver:", .{v});
     v.msgSend(void, "removeFromSuperview", .{});
     v.release();
     if (window) |w| {

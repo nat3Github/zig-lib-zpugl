@@ -77,6 +77,13 @@ pub const ViewStyleFlags = packed struct(u32) {
     _reserved: u22 = 0,
 };
 
+pub const Insets = struct {
+    left: Span = 0,
+    top: Span = 0,
+    right: Span = 0,
+    bottom: Span = 0,
+};
+
 pub const ConfigureEvent = struct {
     flags: EventFlags = .{},
     x: Coord,
@@ -84,6 +91,7 @@ pub const ConfigureEvent = struct {
     width: Span,
     height: Span,
     style: ViewStyleFlags,
+    insets: Insets = .{},
 };
 
 pub const ExposeEvent = struct {

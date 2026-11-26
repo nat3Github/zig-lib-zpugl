@@ -59,6 +59,7 @@ view: *zpugl.View,
 gl: Renderer,
 size: dvui.Size.Physical,
 natural: dvui.Size.Natural,
+insets: dvui.Rect = .{},
 scale: f32 = 1.0,
 scale_override: ?f32 = null,
 headless: bool = false,
@@ -327,6 +328,12 @@ fn onEvent(view: *zpugl.View, event: *const zpugl.Event) zpugl.Status {
             self.readScale();
             const div: f32 = if (builtin.os.tag.isDarwin()) 1 else self.scale;
             self.natural = .{ .w = @as(f32, @floatFromInt(ev.width)) / div, .h = @as(f32, @floatFromInt(ev.height)) / div };
+            self.insets = .{
+                .x = @as(f32, @floatFromInt(ev.insets.left)) / div,
+                .y = @as(f32, @floatFromInt(ev.insets.top)) / div,
+                .w = @as(f32, @floatFromInt(ev.insets.right)) / div,
+                .h = @as(f32, @floatFromInt(ev.insets.bottom)) / div,
+            };
             self.size = self.natural.scale(self.scale, dvui.Size.Physical);
         },
         .close => self.closed = true,
