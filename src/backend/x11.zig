@@ -233,6 +233,34 @@ const XSelectionEvent_t = extern struct {
     time: Time,
 };
 
+const XWindowAttributes = extern struct {
+    x: c_int,
+    y: c_int,
+    width: c_int,
+    height: c_int,
+    border_width: c_int,
+    depth: c_int,
+    visual: ?*anyopaque,
+    root: Window,
+    class: c_int,
+    bit_gravity: c_int,
+    win_gravity: c_int,
+    backing_store: c_int,
+    backing_planes: c_ulong,
+    backing_pixel: c_ulong,
+    save_under: Bool_x,
+    colormap: Colormap,
+    map_installed: Bool_x,
+    map_state: c_int,
+    all_event_masks: c_long,
+    your_event_mask: c_long,
+    do_not_propagate_mask: c_long,
+    override_redirect: Bool_x,
+    screen: ?*anyopaque,
+};
+const IsViewable = 2;
+extern fn XGetWindowAttributes(display: *Display, w: Window, attrs: *XWindowAttributes) c_int;
+
 const XSelectionClearEvent_t = extern struct {
     type: c_int,
     serial: c_ulong,
@@ -1790,6 +1818,9 @@ pub fn obscureRegion(view: *root.View, x: i32, y: i32, w: u32, h: u32) root.Stat
 pub fn grabFocus(view: *root.View) root.Status {
     const impl = getWorldImpl(view.world) orelse return .bad_call;
     const win: Window = @intFromPtr(view.handle orelse return .bad_call);
+    var attrs: XWindowAttributes = undefined;
+    if (XGetWindowAttributes(impl.display, win, &attrs) == 0) return .unknown_error;
+    if (attrs.map_state != IsViewable) return .failure;
     _ = XSetInputFocus(impl.display, win, RevertToParent, CurrentTime);
     _ = XFlush(impl.display);
     return .success;
