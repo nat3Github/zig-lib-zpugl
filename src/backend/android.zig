@@ -307,7 +307,6 @@ fn sendConfigure(view: *root.View) void {
     if (w <= 0 or h <= 0) return;
     last_size = .{ w, h };
     last_insets = currentInsets();
-    std.log.info("DIAG configure {d}x{d} insets {any}", .{ w, h, last_insets });
     const width = clampSpan(w);
     const height = clampSpan(h);
     view.size_hints[@backingInt(root.SizeHint.current_size)] = .{ .width = width, .height = height };
