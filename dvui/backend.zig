@@ -30,6 +30,8 @@ pub const pointer_physical = builtin.os.tag == .windows or (builtin.os.tag == .l
 
 pub const Repaint = struct { ctx: *anyopaque, f: *const fn (*anyopaque) void };
 
+pub const SimState = struct { mapped: bool = true, hidden: bool = false, occluded: bool = false };
+
 pub const Parts = struct {
     world: *zpugl.World,
     view: *zpugl.View,
@@ -86,6 +88,13 @@ wait_step_us: u32 = default_wait_step_us,
 repaint: ?Repaint = null,
 in_frame: bool = false,
 in_expose: bool = false,
+style: zpugl.ViewStyleFlags = .{},
+occluded: bool = false,
+sim_ns: ?i128 = null,
+sim_next_us: ?u32 = 0,
+sim_state: ?SimState = null,
+sim_clipboard: std.ArrayList(u8) = .empty,
+skip_draw: bool = false,
 
 pub fn init(allocator: std.mem.Allocator, parent: ?*anyopaque, w: u32, h: u32) !*Core {
     return open(allocator, .{ .parent = parent, .width = w, .height = h, .position = .{ .x = 0, .y = 0 } });
@@ -93,6 +102,40 @@ pub fn init(allocator: std.mem.Allocator, parent: ?*anyopaque, w: u32, h: u32) !
 
 pub fn initWindow(allocator: std.mem.Allocator, title: []const u8, w: u32, h: u32, pos: ?zpugl.Point) !*Core {
     return open(allocator, .{ .title = title, .width = w, .height = h, .position = pos });
+}
+
+pub fn initSimulated(allocator: std.mem.Allocator, title: []const u8, w: u32, h: u32) !*Core {
+    const self = try open(allocator, .{ .title = title, .width = w, .height = h, .headless = true });
+    self.simulate();
+    return self;
+}
+
+pub fn simulate(self: *Core) void {
+    self.sim_ns = 0;
+    self.sim_state = .{};
+    self.applySimState();
+}
+
+fn applySimState(self: *Core) void {
+    const s = self.sim_state.?;
+    self.style.mapped = s.mapped;
+    self.style.hidden = s.hidden;
+    self.occluded = s.occluded;
+}
+
+pub fn injectConfigure(self: *Core, size: ?zpugl.Area, state: SimState) void {
+    std.debug.assert(self.sim_state != null);
+    self.sim_state = state;
+    var ev = self.view.last_configure;
+    if (size) |a| {
+        ev.width = a.width;
+        ev.height = a.height;
+    }
+    ev.style.mapped = state.mapped;
+    ev.style.hidden = state.hidden;
+    self.view.last_configure = ev;
+    self.view.size_hints[@backingInt(zpugl.SizeHint.current_size)] = .{ .width = ev.width, .height = ev.height };
+    _ = self.injectEvent(.{ .configure = ev });
 }
 
 fn open(allocator: std.mem.Allocator, opts: Options) !*Core {
@@ -225,6 +268,7 @@ fn deinitState(self: *Core) void {
     self.events.deinit(self.allocator);
     self.text_queue.deinit(self.allocator);
     self.pasted.deinit(self.allocator);
+    self.sim_clipboard.deinit(self.allocator);
 }
 
 pub fn windowPosition(self: *Core) ?zpugl.Point {
@@ -324,7 +368,10 @@ fn onEvent(view: *zpugl.View, event: *const zpugl.Event) zpugl.Status {
                 self.repaint.?.f(self.repaint.?.ctx);
             } else self.woken = true;
         },
-        .configure => |ev| if (view.getParent() == 0) {
+        .configure => |ev| {
+            self.style = ev.style;
+            if (self.sim_state != null) self.applySimState() else self.occluded = view.isOccluded();
+            if (view.getParent() != 0) return .success;
             self.readScale();
             const div: f32 = if (builtin.os.tag.isDarwin()) 1 else self.scale;
             self.natural = .{ .w = @as(f32, @floatFromInt(ev.width)) / div, .h = @as(f32, @floatFromInt(ev.height)) / div };
@@ -477,8 +524,14 @@ pub fn frameOnce(self: *Core, ctx: anytype, comptime frameFn: fn (@TypeOf(ctx)) 
     self.in_frame = true;
     defer self.in_frame = false;
     try win.begin(win.beginWait(self.hasEvent()));
+    if (self.skip_draw) _ = dvui.renderingSet(false);
     const keep = try frameFn(ctx);
+    if (self.skip_draw) for (win.subwindows.stack.items) |*sw| {
+        sw.render_cmds = .empty;
+        sw.render_cmds_after = .empty;
+    };
     const end_us = try win.end(.{});
+    self.sim_next_us = end_us;
     if (!keep) self.closed = true;
     return end_us;
 }
@@ -555,14 +608,15 @@ fn dvuiAppMain(main_init: std.process.Init) !void {
 }
 
 pub fn nanoTime(self: *Core) i128 {
-    return @intFromFloat(self.world.getTime() * std.time.ns_per_s);
+    return self.sim_ns orelse @intFromFloat(self.world.getTime() * std.time.ns_per_s);
 }
 
-pub fn realTime(_: *Core) i128 {
-    return std.Io.Clock.real.now(std.Io.Threaded.global_single_threaded.io()).nanoseconds;
+pub fn realTime(self: *Core) i128 {
+    return self.sim_ns orelse std.Io.Clock.real.now(std.Io.Threaded.global_single_threaded.io()).nanoseconds;
 }
 
 pub fn sleep(self: *Core, ns: u64) void {
+    if (self.sim_ns != null) return;
     _ = self.world.update(@as(f64, @floatFromInt(ns)) / std.time.ns_per_s);
 }
 
@@ -750,6 +804,7 @@ pub fn renderTarget(self: *Core, texture: ?dvui.TextureTarget) !void {
 }
 
 pub fn clipboardPasteRequest(self: *Core) !void {
+    if (self.sim_ns != null) return self.pasted.appendSlice(self.allocator, self.sim_clipboard.items);
     self.paste_pending = true;
     if (self.view.paste() != .success) {
         self.paste_pending = false;
@@ -758,6 +813,10 @@ pub fn clipboardPasteRequest(self: *Core) !void {
 }
 
 pub fn clipboardTextSet(self: *Core, text: []const u8) !void {
+    if (self.sim_ns != null) {
+        self.sim_clipboard.clearRetainingCapacity();
+        return self.sim_clipboard.appendSlice(self.allocator, text);
+    }
     if (self.view.setClipboard(.general, "text/plain", text) != .success) return error.BackendError;
 }
 
