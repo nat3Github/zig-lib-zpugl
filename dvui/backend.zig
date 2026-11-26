@@ -85,6 +85,7 @@ wait_step_us: u32 = default_wait_step_us,
 repaint: ?Repaint = null,
 in_frame: bool = false,
 in_expose: bool = false,
+gl_entered: bool = false,
 
 pub fn init(allocator: std.mem.Allocator, parent: ?*anyopaque, w: u32, h: u32) !*Core {
     return open(allocator, .{ .parent = parent, .width = w, .height = h, .position = .{ .x = 0, .y = 0 } });
@@ -584,6 +585,7 @@ pub fn begin(self: *Core, arena: std.mem.Allocator) !void {
     }
     const gb = zpugl.gl.get_backend();
     if (!self.in_expose) _ = gb.enter(self.view, null);
+    self.gl_entered = true;
     self.gl.native.begin(w, h);
     zpugl.gl.resize(self.view);
     c.glViewport(0, 0, @intCast(w), @intCast(h));
@@ -652,6 +654,7 @@ pub fn end(self: *Core) !void {
     self.key_num = null;
     if (self.gl == .vulkan) return self.gl.vulkan.end();
     if (use_metal) return self.gl.native.end();
+    self.gl_entered = false;
     if (self.in_expose) return;
     const expose = zpugl.ExposeEvent{ .x = 0, .y = 0, .width = @intFromFloat(self.size.w), .height = @intFromFloat(self.size.h) };
     _ = zpugl.gl.get_backend().leave(self.view, &expose);
@@ -815,6 +818,7 @@ pub fn resize(self: *Core, w: u32, h: u32) void {
     self.natural = .{ .w = @floatFromInt(w), .h = @floatFromInt(h) };
     self.size = self.natural.scale(self.scale, dvui.Size.Physical);
     self.fitChildView();
+    if (self.gl_entered) _ = zpugl.gl.get_backend().enter(self.view, null);
 }
 
 fn fitChildView(self: *Core) void {
