@@ -1207,7 +1207,8 @@ export fn zpugl_mac_get_scale_factor(native: usize) f64 {
     const pool = objc.AutoreleasePool.init();
     defer pool.deinit();
     if (viewWindow(native)) |win| return win.msgSend(CGFloat, "backingScaleFactor", .{});
-    return 1.0;
+    const screen = nsClass("NSScreen").msgSend(c.id, "mainScreen", .{}) orelse return 1.0;
+    return objFromId(screen).msgSend(CGFloat, "backingScaleFactor", .{});
 }
 export fn zpugl_mac_grab_focus(native: usize) bool {
     const pool = objc.AutoreleasePool.init();

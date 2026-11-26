@@ -292,8 +292,7 @@ pub fn getTime(world: *root.World) f64 {
 }
 
 pub fn getScaleFactor(view: *root.View) f64 {
-    const native = @intFromPtr(view.handle orelse return 1.0);
-    return zpugl_mac_get_scale_factor(native);
+    return zpugl_mac_get_scale_factor(@intFromPtr(view.handle));
 }
 
 pub fn obscureView(view: *root.View) root.Status {
