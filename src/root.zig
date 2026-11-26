@@ -607,6 +607,7 @@ pub const View = struct {
     pos_hints: [pos_hint_count]Point = @splat(.{ .x = std.math.minInt(i16), .y = std.math.minInt(i16) }),
     strings: [string_hint_count]?[]u8 = @splat(null),
     style: ViewStyleFlags = .{},
+    last_configure: ConfigureEvent = .{ .x = 0, .y = 0, .width = 0, .height = 0, .style = .{} },
     visible: bool = false,
     gl_context: usize = 0,
     impl: ?*anyopaque = null, // backend-private state (e.g. win32 ViewImpl)
@@ -965,7 +966,27 @@ pub const common = struct {
         return m;
     }
 
+    pub fn keepState(current: ViewStyleFlags, wanted: ViewStyleFlags) ViewStyleFlags {
+        var flags = wanted;
+        flags.mapped = current.mapped;
+        flags.hidden = current.hidden;
+        return flags;
+    }
+
+    pub fn dispatchStyle(view: *View, mapped: bool, hidden: bool) void {
+        if (view.style.mapped == mapped and view.style.hidden == hidden) return;
+        view.style.mapped = mapped;
+        view.style.hidden = hidden;
+        var ev = view.last_configure;
+        const size = view.size_hints[@backingInt(SizeHint.current_size)];
+        ev.width = size.width;
+        ev.height = size.height;
+        ev.style = view.style;
+        _ = dispatchEvent(view, &.{ .configure = ev });
+    }
+
     pub fn dispatchEvent(view: *View, event: *const Event) Status {
+        if (event.* == .configure) view.last_configure = event.configure;
         switch (event.*) {
             inline .key_press, .key_release => |k, tag| {
                 const state = filterMods(k.state, k.key);

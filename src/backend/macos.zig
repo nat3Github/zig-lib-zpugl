@@ -15,9 +15,12 @@ export fn zpugl_on_expose(view_ptr: *anyopaque, x: i16, y: i16, w: u16, h: u16) 
     _ = common.dispatchEvent(view, &ev);
 }
 
-export fn zpugl_on_configure(view_ptr: *anyopaque, x: i16, y: i16, w: u16, h: u16) void {
+export fn zpugl_on_configure(view_ptr: *anyopaque, x: i16, y: i16, w: u16, h: u16, state: u32, changed_only: bool) void {
     const view: *root.View = @ptrCast(@alignCast(view_ptr));
-    // Update current size hint
+    const now: root.ViewStyleFlags = @bitCast(state);
+    if (changed_only and now.mapped == view.style.mapped and now.hidden == view.style.hidden) return;
+    view.style.mapped = now.mapped;
+    view.style.hidden = now.hidden;
     view.size_hints[@backingInt(root.SizeHint.current_size)] = .{ .width = w, .height = h };
     const ev = root.Event{ .configure = .{ .x = x, .y = y, .width = w, .height = h, .style = view.style } };
     _ = common.dispatchEvent(view, &ev);
@@ -340,7 +343,7 @@ pub fn setViewStyle(view: *root.View, flags: root.ViewStyleFlags) root.Status {
     const native = @intFromPtr(view.handle orelse return .bad_call);
     const bits: u32 = @bitCast(flags);
     zpugl_mac_set_view_style(native, bits);
-    view.style = flags;
+    view.style = root.common.keepState(view.style, flags);
     return .success;
 }
 pub fn applySizeHints(view: *root.View) root.Status {

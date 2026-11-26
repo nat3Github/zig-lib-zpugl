@@ -431,6 +431,7 @@ pub fn showView(view: *root.View, _: root.ShowCommand) root.Status {
     if (ownedWindow(view)) |w| w.msgSend(void, "makeKeyAndVisible", .{});
     v.msgSend(void, "setHidden:", .{false});
     view.visible = true;
+    common.dispatchStyle(view, true, false);
     return .success;
 }
 
@@ -440,6 +441,7 @@ pub fn hideView(view: *root.View) root.Status {
     const v = uiView(view) orelse return .bad_call;
     v.msgSend(void, "setHidden:", .{true});
     view.visible = false;
+    common.dispatchStyle(view, false, false);
     return .success;
 }
 
@@ -538,7 +540,7 @@ pub fn setCursor(_: *root.View, _: root.Cursor) root.Status {
 }
 
 pub fn setViewStyle(view: *root.View, flags: root.ViewStyleFlags) root.Status {
-    view.style = flags;
+    view.style = common.keepState(view.style, flags);
     return .success;
 }
 

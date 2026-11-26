@@ -32,6 +32,8 @@ const SelectionClear_ev = 29;
 const SelectionRequest_ev = 30;
 const SelectionNotify_ev = 31;
 const PropertyNotify_ev = 28;
+const UnmapNotify = 18;
+const MapNotify = 19;
 
 // Event masks
 const KeyPressMask: c_long = 1 << 0;
@@ -926,6 +928,8 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
                 handleXdndDrop(world, impl, view, &xev.client);
             }
         },
+        MapNotify, UnmapNotify => common.dispatchStyle(view, xev.type == MapNotify, view.style.hidden),
+        PropertyNotify_ev => if (xev.property.atom == impl.a_net_wm_state) common.dispatchStyle(view, view.style.mapped, hasState(impl, @intCast(win_id), impl.a_net_wm_state_hidden)),
         SelectionClear_ev => {
             // Lost ownership: free owned data
             if (impl.clipboard.owned_mime) |m| world.allocator.free(m);
@@ -1661,6 +1665,20 @@ pub fn getScaleFactor(view: *root.View) f64 {
     return 1.0; // X11 DPI scaling is app-managed; return 1 as baseline
 }
 
+fn hasState(impl: *WorldImpl, win: Window, atom: Atom) bool {
+    var actual_type: Atom = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var data: [*]u8 = undefined;
+    if (XGetWindowProperty(impl.display, win, impl.a_net_wm_state, 0, 64, 0, XA_ATOM, &actual_type, &actual_format, &nitems, &bytes_after, &data) != 0) return false;
+    if (actual_type == 0) return false;
+    defer _ = XFree(@ptrCast(data));
+    if (actual_type != XA_ATOM) return false;
+    const atoms: [*]const Atom = @ptrCast(@alignCast(data));
+    return std.mem.findScalar(Atom, atoms[0..nitems], atom) != null;
+}
+
 pub fn setViewStyle(view: *root.View, flags: root.ViewStyleFlags) root.Status {
     const impl = getWorldImpl(view.world) orelse return .bad_call;
     const win: Window = @intFromPtr(view.handle orelse return .bad_call);
@@ -1711,7 +1729,7 @@ pub fn setViewStyle(view: *root.View, flags: root.ViewStyleFlags) root.Status {
             return .unknown_error;
         }
     }
-    view.style = flags;
+    view.style = common.keepState(view.style, flags);
     _ = XFlush(display);
     return .success;
 }

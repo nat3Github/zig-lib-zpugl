@@ -97,6 +97,8 @@ pub const PIXELFORMATDESCRIPTOR = extern struct {
 // Window messages
 const WM_DESTROY = 0x0002;
 const WM_SIZE = 0x0005;
+const WM_SHOWWINDOW = 0x0018;
+const SIZE_MINIMIZED = 1;
 const WM_PAINT = 0x000F;
 const WM_CLOSE = 0x0010;
 const WM_SETFOCUS = 0x0007;
@@ -177,6 +179,7 @@ const SW_SHOWNA = 8;
 const SW_MAXIMIZE = 3;
 const SW_MINIMIZE = 6;
 const SW_RESTORE = 9;
+const SW_SHOWMINIMIZED = 2;
 
 // SetWindowPos flags
 const SWP_NOACTIVATE: DWORD = 0x0010;
@@ -821,8 +824,13 @@ fn wndProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.wina
             return 0;
         },
         WM_SIZE => {
+            view.style.hidden = wParam == SIZE_MINIMIZED;
             configure(view, @intCast(lParam & 0xFFFF), @intCast((lParam >> 16) & 0xFFFF));
             return 0;
+        },
+        WM_SHOWWINDOW => {
+            common.dispatchStyle(view, wParam != 0, view.style.hidden);
+            return DefWindowProcW(hwnd, msg, wParam, lParam);
         },
         WM_CLOSE => {
             _ = common.dispatchEvent(view, &root.Event{ .close = {} });
@@ -1310,10 +1318,8 @@ pub fn setViewStyle(view: *root.View, flags: root.ViewStyleFlags) root.Status {
     if (flags.demanding) {
         _ = FlashWindow(hwnd, 1);
     }
-    if (flags.hidden) {
-        _ = ShowWindow(hwnd, SW_HIDE);
-    }
-    view.style = flags;
+    if (flags.hidden != (IsIconic(hwnd) != 0)) _ = ShowWindow(hwnd, if (flags.hidden) SW_SHOWMINIMIZED else SW_RESTORE);
+    view.style = common.keepState(view.style, flags);
     return .success;
 }
 

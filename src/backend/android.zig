@@ -617,6 +617,7 @@ pub fn getScaleFactor(view: *root.View) f64 {
 pub fn showView(view: *root.View, command: root.ShowCommand) root.Status {
     _ = command;
     view.visible = true;
+    common.dispatchStyle(view, true, false);
     return .success;
 }
 
@@ -686,7 +687,7 @@ pub fn stopTimer(world: *root.World, view: *root.View, id: usize) root.Status {
 }
 
 pub fn setViewStyle(view: *root.View, flags: root.ViewStyleFlags) root.Status {
-    view.style = flags;
+    view.style = common.keepState(view.style, flags);
     return .success;
 }
 

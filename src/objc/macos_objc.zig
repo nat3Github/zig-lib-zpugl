@@ -54,7 +54,7 @@ const NSViewMinYMargin: NSUInteger = 1 << 3;
 // --- Zig callbacks (defined in backend/macos.zig) ---
 
 extern fn zpugl_on_expose(view_ptr: *anyopaque, x: i16, y: i16, w: u16, h: u16) void;
-extern fn zpugl_on_configure(view_ptr: *anyopaque, x: i16, y: i16, w: u16, h: u16) void;
+extern fn zpugl_on_configure(view_ptr: *anyopaque, x: i16, y: i16, w: u16, h: u16, state: u32, changed_only: bool) void;
 extern fn zpugl_on_close(view_ptr: *anyopaque) void;
 extern fn zpugl_on_button(view_ptr: *anyopaque, press: bool, time: f64, x: f64, y: f64, button: u32, mods: u32) void;
 extern fn zpugl_on_motion(view_ptr: *anyopaque, time: f64, x: f64, y: f64, mods: u32) void;
@@ -217,10 +217,24 @@ fn impDrawRect(self: c.id, _: c.SEL, dirty: NSRect) callconv(.c) void {
 }
 
 fn impSetFrameSize(self: c.id, _: c.SEL, new_size: NSSize) callconv(.c) void {
-    const obj = objFromId(self);
-    obj.msgSendSuper(nsView(), void, "setFrameSize:", .{new_size});
-    const frame = obj.msgSend(NSRect, "frame", .{});
-    if (ivarPtr(self)) |p| sendRect(zpugl_on_configure, p, frame.origin.x, frame.origin.y, new_size.width, new_size.height);
+    objFromId(self).msgSendSuper(nsView(), void, "setFrameSize:", .{new_size});
+    sendConfigure(self, false);
+}
+
+fn windowState(self: c.id) u32 {
+    const win = ownWindow(@intFromPtr(self)) orelse return 0;
+    const flags: ViewStyleFlags = .{ .mapped = win.msgSend(bool, "isVisible", .{}), .hidden = win.msgSend(bool, "isMiniaturized", .{}) };
+    return @bitCast(flags);
+}
+
+fn sendConfigure(self: c.id, changed_only: bool) void {
+    const p = ivarPtr(self) orelse return;
+    const f = objFromId(self).msgSend(NSRect, "frame", .{});
+    zpugl_on_configure(p, std.math.lossyCast(i16, f.origin.x), std.math.lossyCast(i16, f.origin.y), std.math.lossyCast(u16, f.size.width), std.math.lossyCast(u16, f.size.height), windowState(self), changed_only);
+}
+
+fn impWindowStateChanged(self: c.id, _: c.SEL, _: c.id) callconv(.c) void {
+    sendConfigure(self, false);
 }
 
 fn buttonImpl(self: c.id, event: c.id, press: bool, btn: u32) void {
@@ -781,6 +795,8 @@ fn ensureViewClass() objc.Class {
     std.debug.assert(cls.addMethod("acceptsFirstResponder", impAcceptsFirstResponder));
     std.debug.assert(cls.addMethod("isFlipped", impIsFlipped));
     std.debug.assert(cls.addMethod("windowShouldClose:", impWindowShouldClose));
+    std.debug.assert(cls.addMethod("windowDidMiniaturize:", impWindowStateChanged));
+    std.debug.assert(cls.addMethod("windowDidDeminiaturize:", impWindowStateChanged));
     std.debug.assert(cls.addMethod("drawRect:", impDrawRect));
     std.debug.assert(cls.addMethod("setFrameSize:", impSetFrameSize));
     std.debug.assert(cls.addMethod("mouseDown:", impMouseDown));
@@ -1047,8 +1063,7 @@ export fn zpugl_mac_realized(native: usize, view_ptr: *anyopaque) void {
     defer pool.deinit();
     const view = objFromId(@ptrFromInt(native));
     setIvarPtr(view.value, view_ptr);
-    const frame = view.msgSend(NSRect, "frame", .{});
-    sendRect(zpugl_on_configure, view_ptr, frame.origin.x, frame.origin.y, frame.size.width, frame.size.height);
+    sendConfigure(view.value, false);
 }
 
 export fn zpugl_mac_destroy_view(native: usize) void {
@@ -1090,6 +1105,7 @@ export fn zpugl_mac_show_view(native: usize, command: u32) void {
         1 => win.msgSend(void, "makeKeyAndOrderFront:", .{@as(c.id, null)}),
         else => win.msgSend(void, "orderFront:", .{@as(c.id, null)}),
     }
+    sendConfigure(view.value, true);
 }
 
 export fn zpugl_mac_hide_view(native: usize) void {
@@ -1097,6 +1113,7 @@ export fn zpugl_mac_hide_view(native: usize) void {
     defer pool.deinit();
     const win = ownWindow(native) orelse return objFromId(@ptrFromInt(native)).msgSend(void, "setHidden:", .{true});
     win.msgSend(void, "orderOut:", .{@as(c.id, null)});
+    sendConfigure(@ptrFromInt(native), true);
 }
 
 inline fn viewWindow(native: usize) ?objc.Object {
@@ -1372,7 +1389,7 @@ export fn zpugl_mac_set_view_style(native: usize, flags: u32) void {
         win.msgSend(void, "setStyleMask:", .{mask});
     }
     win.msgSend(void, "setLevel:", .{@as(NSInteger, if (f.above) NSFloatingWindowLevel else NSNormalWindowLevel)});
-    if (f.hidden) win.msgSend(void, "orderOut:", .{@as(c.id, null)});
+    if (f.hidden != win.msgSend(bool, "isMiniaturized", .{})) win.msgSend(void, if (f.hidden) "miniaturize:" else "deminiaturize:", .{@as(c.id, null)});
     const is_fs = (win.msgSend(NSUInteger, "styleMask", .{}) & NSWindowStyleMaskFullScreen) != 0;
     if (f.fullscreen != is_fs) win.msgSend(void, "toggleFullScreen:", .{@as(c.id, null)});
     if (f.demanding) _ = nsApp().msgSend(NSInteger, "requestUserAttention:", .{@as(NSUInteger, 10)});
