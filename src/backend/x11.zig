@@ -1612,6 +1612,11 @@ fn applyWMSizeHints(display: *Display, win: Window, view: *root.View, placed: bo
 
 pub fn destroyView(view: *root.View) void {
     const impl = getWorldImpl(view.world) orelse return;
+    var i: usize = impl.timers.items.len;
+    while (i > 0) {
+        i -= 1;
+        if (impl.timers.items[i].view == view) _ = impl.timers.swapRemove(i);
+    }
     if (view.handle) |h| {
         const win: Window = @intFromPtr(h);
         if (impl.xic_map.fetchRemove(win)) |kv| {
