@@ -308,6 +308,7 @@ pub extern "user32" fn FlashWindow(hWnd: HWND, bInvert: BOOL) callconv(.winapi) 
 pub extern "kernel32" fn GlobalAlloc(uFlags: UINT, dwBytes: usize) callconv(.winapi) HANDLE;
 pub extern "kernel32" fn GlobalLock(hMem: HANDLE) callconv(.winapi) ?*anyopaque;
 pub extern "kernel32" fn GlobalUnlock(hMem: HANDLE) callconv(.winapi) BOOL;
+pub extern "kernel32" fn GlobalFree(hMem: HANDLE) callconv(.winapi) HANDLE;
 pub extern "kernel32" fn GlobalSize(hMem: HANDLE) callconv(.winapi) usize;
 pub extern "kernel32" fn GetModuleHandleW(lpModuleName: ?[*:0]const u16) callconv(.winapi) HMODULE;
 pub extern "kernel32" fn GetModuleHandleExW(dwFlags: DWORD, lpModuleName: ?*const anyopaque, phModule: *HMODULE) callconv(.winapi) BOOL;
@@ -1566,6 +1567,10 @@ pub fn setClipboard(view: *root.View, clipboard: root.Clipboard, mime_type: []co
     const u16_len = std.unicode.calcUtf16LeLen(data) catch return .bad_parameter;
     const total_bytes = (u16_len + 1) * 2;
     const h = GlobalAlloc(GMEM_MOVEABLE, total_bytes) orelse return .no_memory;
+    var owned = true;
+    defer if (owned) {
+        _ = GlobalFree(h);
+    };
     {
         const p = GlobalLock(h) orelse return .failure;
         defer _ = GlobalUnlock(h);
@@ -1577,6 +1582,7 @@ pub fn setClipboard(view: *root.View, clipboard: root.Clipboard, mime_type: []co
     defer _ = CloseClipboard();
     _ = EmptyClipboard();
     if (SetClipboardData(CF_UNICODETEXT, h) == null) return .failure;
+    owned = false;
     return .success;
 }
 

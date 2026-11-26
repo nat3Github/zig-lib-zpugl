@@ -247,6 +247,34 @@ const XSelectionEvent_t = extern struct {
     time: Time,
 };
 
+const XWindowAttributes = extern struct {
+    x: c_int,
+    y: c_int,
+    width: c_int,
+    height: c_int,
+    border_width: c_int,
+    depth: c_int,
+    visual: ?*anyopaque,
+    root: Window,
+    class: c_int,
+    bit_gravity: c_int,
+    win_gravity: c_int,
+    backing_store: c_int,
+    backing_planes: c_ulong,
+    backing_pixel: c_ulong,
+    save_under: Bool_x,
+    colormap: Colormap,
+    map_installed: Bool_x,
+    map_state: c_int,
+    all_event_masks: c_long,
+    your_event_mask: c_long,
+    do_not_propagate_mask: c_long,
+    override_redirect: Bool_x,
+    screen: ?*anyopaque,
+};
+const IsViewable = 2;
+extern fn XGetWindowAttributes(display: *Display, w: Window, attrs: *XWindowAttributes) c_int;
+
 const XSelectionClearEvent_t = extern struct {
     type: c_int,
     serial: c_ulong,
@@ -351,7 +379,6 @@ pub const GLX_CONTEXT_CORE_PROFILE_BIT_ARB = 0x00000001;
 pub const GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB = 0x00000002;
 pub const GLX_CONTEXT_FLAGS_ARB = 0x2094;
 pub const GLX_CONTEXT_DEBUG_BIT_ARB = 0x0001;
-pub const GLX_NONE = 0x8000;
 
 pub const PFNGLXCREATECONTEXTATTRIBSARBPROC = *const fn (
     display: *Display,
@@ -488,7 +515,6 @@ const ClipboardState = struct {
     owned_mime: ?[]u8 = null,
     owned_data: ?[]u8 = null,
     // Receiving (paste in flight)
-    recv_view: ?*root.View = null,
     recv_targets: std.ArrayListUnmanaged(Atom) = .empty,
     recv_type_strs: std.ArrayListUnmanaged([]u8) = .empty,
     recv_buf: std.ArrayListUnmanaged(u8) = .empty,
@@ -718,10 +744,6 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
                 .style = view.style,
             } };
             _ = common.dispatchEvent(view, &ev);
-            // Resize GL context if needed
-            if (view.gl_context != 0) {
-                _ = glXMakeCurrent(display, win_id, @ptrFromInt(view.gl_context));
-            }
         },
         ButtonPress, ButtonRelease => {
             if (xev.type == ButtonPress and xev.button.button <= 3 and view.parent != 0) {
@@ -955,7 +977,7 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
             handleSelectionRequest(world, impl, &xev.selection_request);
         },
         SelectionNotify_ev => {
-            handleSelectionNotify(world, impl, &xev.selection);
+            handleSelectionNotify(world, impl, view, &xev.selection);
         },
         else => {},
     }
@@ -1012,14 +1034,13 @@ fn handleSelectionRequest(world: *root.World, impl: *WorldImpl, req: *XSelection
     _ = XFlush(impl.display);
 }
 
-fn handleSelectionNotify(world: *root.World, impl: *WorldImpl, ev: *XSelectionEvent_t) void {
+fn handleSelectionNotify(world: *root.World, impl: *WorldImpl, view: *root.View, ev: *XSelectionEvent_t) void {
     // Xdnd drop reply: selection == XdndSelection
     if (ev.selection == impl.a_xdnd_selection) {
         handleXdndSelection(world, impl, ev);
         return;
     }
     const cb = &impl.clipboard;
-    const view = cb.recv_view orelse return;
     if (ev.property == 0) return; // refused
 
     var actual_type: Atom = 0;
@@ -1323,15 +1344,13 @@ fn getTimeNs() u64 {
 fn checkTimers(world: *root.World, impl: *WorldImpl) void {
     _ = world;
     const now = getTimeNs();
-    for (impl.timers.items) |*timer| {
-        if (now >= timer.next_fire_ns) {
-            _ = common.dispatchEvent(timer.view, &root.Event{ .timer = .{ .id = timer.id } });
-            // Realign phase: skip missed ticks so next_fire_ns > now (matches pugl behavior).
-            timer.next_fire_ns += timer.interval_ns;
-            while (timer.next_fire_ns <= now) {
-                timer.next_fire_ns += timer.interval_ns;
-            }
-        }
+    var i: usize = 0;
+    while (i < impl.timers.items.len) : (i += 1) {
+        const timer = &impl.timers.items[i];
+        if (now < timer.next_fire_ns) continue;
+        timer.next_fire_ns += timer.interval_ns;
+        while (timer.next_fire_ns <= now) timer.next_fire_ns += timer.interval_ns;
+        _ = common.dispatchEvent(timer.view, &root.Event{ .timer = .{ .id = timer.id } });
     }
 }
 
@@ -1609,6 +1628,11 @@ fn applyWMSizeHints(display: *Display, win: Window, view: *root.View, placed: bo
 
 pub fn destroyView(view: *root.View) void {
     const impl = getWorldImpl(view.world) orelse return;
+    var i: usize = impl.timers.items.len;
+    while (i > 0) {
+        i -= 1;
+        if (impl.timers.items[i].view == view) _ = impl.timers.swapRemove(i);
+    }
     if (view.handle) |h| {
         const win: Window = @intFromPtr(h);
         if (impl.xic_map.fetchRemove(win)) |kv| {
@@ -1833,6 +1857,9 @@ pub fn obscureRegion(view: *root.View, x: i32, y: i32, w: u32, h: u32) root.Stat
 pub fn grabFocus(view: *root.View) root.Status {
     const impl = getWorldImpl(view.world) orelse return .bad_call;
     const win: Window = @intFromPtr(view.handle orelse return .bad_call);
+    var attrs: XWindowAttributes = undefined;
+    if (XGetWindowAttributes(impl.display, win, &attrs) == 0) return .unknown_error;
+    if (attrs.map_state != IsViewable) return .failure;
     _ = XSetInputFocus(impl.display, win, RevertToParent, CurrentTime);
     _ = XFlush(impl.display);
     return .success;
@@ -1923,7 +1950,6 @@ pub fn registerDropType(view: *root.View, mime_type: []const u8) root.Status {
 pub fn paste(view: *root.View) root.Status {
     const impl = getWorldImpl(view.world) orelse return .bad_call;
     const win: Window = @intFromPtr(view.handle orelse return .bad_call);
-    impl.clipboard.recv_view = view;
     impl.clipboard.accepted_target = 0;
     _ = XConvertSelection(impl.display, impl.a_clipboard, impl.a_targets, impl.a_zpugl_sel, win, CurrentTime);
     _ = XFlush(impl.display);
@@ -1975,8 +2001,7 @@ pub fn rejectOffer(view: *root.View, offer: *const root.DataOfferEvent, rx: i32,
     _ = ry;
     _ = rw;
     _ = rh;
-    const impl = getWorldImpl(view.world) orelse return .bad_call;
-    impl.clipboard.recv_view = null;
+    _ = getWorldImpl(view.world) orelse return .bad_call;
     return .success;
 }
 
