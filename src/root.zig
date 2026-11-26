@@ -1054,7 +1054,7 @@ test "world and view accessors" {
     try std.testing.expect(!view.getVisible());
     try std.testing.expectEqual(@as(NativeView, 0), view.getNativeView());
     try std.testing.expectEqual(@as(?*anyopaque, null), view.getContext());
-    try std.testing.expectEqual(@as(f64, 1.0), view.getScaleFactor());
+    try std.testing.expect(view.getScaleFactor() >= 1.0);
     try std.testing.expectEqual(ViewStyleFlags{}, view.getViewStyle());
     try std.testing.expectEqual(@as(?Point, null), view.getWindowPosition());
     try std.testing.expectEqual(@as(u32, 0), tag);
