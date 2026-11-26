@@ -1326,15 +1326,13 @@ fn getTimeNs() u64 {
 fn checkTimers(world: *root.World, impl: *WorldImpl) void {
     _ = world;
     const now = getTimeNs();
-    for (impl.timers.items) |*timer| {
-        if (now >= timer.next_fire_ns) {
-            _ = common.dispatchEvent(timer.view, &root.Event{ .timer = .{ .id = timer.id } });
-            // Realign phase: skip missed ticks so next_fire_ns > now (matches pugl behavior).
-            timer.next_fire_ns += timer.interval_ns;
-            while (timer.next_fire_ns <= now) {
-                timer.next_fire_ns += timer.interval_ns;
-            }
-        }
+    var i: usize = 0;
+    while (i < impl.timers.items.len) : (i += 1) {
+        const timer = &impl.timers.items[i];
+        if (now < timer.next_fire_ns) continue;
+        timer.next_fire_ns += timer.interval_ns;
+        while (timer.next_fire_ns <= now) timer.next_fire_ns += timer.interval_ns;
+        _ = common.dispatchEvent(timer.view, &root.Event{ .timer = .{ .id = timer.id } });
     }
 }
 
