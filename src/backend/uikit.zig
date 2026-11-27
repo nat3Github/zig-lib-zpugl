@@ -403,8 +403,10 @@ pub fn createView(view: *root.View) root.Status {
         container.release();
         vc.release();
     }
+    if (view.parent == 0) uiview.msgSend(void, "setHidden:", .{true});
     view.handle = uiview.value;
-    view.visible = false;
+    view.visible = view.parent != 0;
+    view.occluded = view.parent == 0 or !world_visible;
     return .success;
 }
 
