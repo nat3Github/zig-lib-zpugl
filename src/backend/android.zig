@@ -335,9 +335,7 @@ fn onAppCmd(a: *App, cmd_raw: i32) callconv(.c) void {
         .lost_focus => if (current_view) |v| {
             _ = common.dispatchEvent(v, &.{ .focus_out = .{ .mode = .normal } });
         },
-        .start, .stop => if (current_view) |v| {
-            if (v.handle != null) common.dispatchOccluded(v, cmd == .stop) else v.occluded = cmd == .stop;
-        },
+        .start, .stop => if (current_view) |v| common.dispatchOccluded(v, cmd == .stop),
         .destroy => {
             destroyed = true;
             if (current_view) |v| _ = common.dispatchSimpleEvent(v, .close);
@@ -557,13 +555,13 @@ pub fn glDestroy() void {
 }
 
 pub fn glEnter() bool {
-    if (egl.surface == null) return false;
+    if (egl.context == null) return false;
     return eglMakeCurrent(egl.display, egl.surface, egl.surface, egl.context) != 0;
 }
 
 pub fn glLeave(swap: bool) void {
-    if (egl.surface == null) return;
-    if (swap) _ = eglSwapBuffers(egl.display, egl.surface);
+    if (egl.context == null) return;
+    if (swap and egl.surface != null) _ = eglSwapBuffers(egl.display, egl.surface);
     _ = eglMakeCurrent(egl.display, null, null, null);
 }
 
