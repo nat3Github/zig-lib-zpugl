@@ -260,7 +260,7 @@ pub extern "user32" fn GetWindowRect(hWnd: HWND, lpRect: *RECT) callconv(.winapi
 pub extern "user32" fn MonitorFromRect(lprc: *const RECT, dwFlags: DWORD) callconv(.winapi) ?*anyopaque;
 pub extern "user32" fn IsIconic(hWnd: HWND) callconv(.winapi) BOOL;
 extern "user32" fn IsWindowVisible(hWnd: HWND) callconv(.winapi) BOOL;
-extern "user32" fn GetAncestor(hWnd: HWND, flags: UINT) callconv(.winapi) ?HWND;
+extern "user32" fn GetAncestor(hWnd: HWND, flags: UINT) callconv(.winapi) HWND;
 const GA_ROOT: UINT = 2;
 pub extern "user32" fn GetClientRect(hWnd: HWND, lpRect: *RECT) callconv(.winapi) BOOL;
 pub extern "user32" fn InvalidateRect(hWnd: HWND, lpRect: ?*const RECT, bErase: BOOL) callconv(.winapi) BOOL;
@@ -1227,6 +1227,7 @@ pub fn destroyView(view: *root.View) void {
             const vi: *ViewImpl = @ptrCast(@alignCast(p));
             if (vi.drop_registered) _ = RevokeDragDrop(h);
         }
+        view.style.mapped = false;
         _ = DestroyWindow(h);
         view.handle = null;
     }
