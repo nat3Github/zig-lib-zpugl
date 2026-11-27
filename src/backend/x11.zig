@@ -1704,7 +1704,11 @@ pub fn getScaleFactor(view: *root.View) f64 {
 }
 
 pub fn isOccluded(view: *root.View) bool {
-    return view.occluded or (view.handle != null and !view.style.mapped);
+    const impl = getWorldImpl(view.world) orelse return false;
+    const win: Window = @intFromPtr(view.handle orelse return false);
+    var attrs: XWindowAttributes = undefined;
+    if (XGetWindowAttributes(impl.display, win, &attrs) == 0) return false;
+    return view.occluded or attrs.map_state != IsViewable;
 }
 
 fn hasState(impl: *WorldImpl, win: Window, atom: Atom) bool {

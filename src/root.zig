@@ -815,7 +815,8 @@ pub const View = struct {
     /// zpugl extension, pugl has no equivalent. True when no part of the window is on screen: covered by other windows,
     /// on another space or desktop, display off, minimized, hidden, or the app in the background. A view with a parent
     /// reports the state of the host window. A change arrives as a configure event; read the state there.
-    /// macOS uses the window occlusion state, X11 VisibilityNotify and mapping, iOS and Android background and
+    /// macOS uses the window occlusion state, X11 VisibilityNotify and the map state at the call (an unmapped host
+    /// sends its children no event, so that change arrives without a configure), iOS and Android background and
     /// foreground. Win32 reads minimization and DWMWA_CLOAKED (another virtual desktop) at the call; cloaking sends no
     /// configure, and a window covered by other windows reads false. Where the state is unknown the result is false.
     pub fn isOccluded(self: *View) bool {
