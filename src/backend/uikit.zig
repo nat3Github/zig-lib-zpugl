@@ -260,10 +260,14 @@ fn impDeleteBackward(self: c.id, _: c.SEL) callconv(.c) void {
     if (zigView(self)) |view| keyTap(view, .backspace);
 }
 
+var world_visible = true;
+
 fn setWorldVisible(visible: bool) void {
+    world_visible = visible;
     const world = world_ref orelse return;
     for (world.views.items) |view| {
-        if (view.handle == null) continue;
+        const v = uiView(view) orelse continue;
+        if (v.msgSend(bool, "isHidden", .{})) continue;
         view.visible = visible;
         common.dispatchOccluded(view, !visible);
         if (visible) {
@@ -440,6 +444,7 @@ pub fn showView(view: *root.View, _: root.ShowCommand) root.Status {
     v.msgSend(void, "setHidden:", .{false});
     view.visible = true;
     common.dispatchStyle(view, true, false);
+    common.dispatchOccluded(view, !world_visible);
     return .success;
 }
 
@@ -450,6 +455,7 @@ pub fn hideView(view: *root.View) root.Status {
     v.msgSend(void, "setHidden:", .{true});
     view.visible = false;
     common.dispatchStyle(view, false, false);
+    common.dispatchOccluded(view, true);
     return .success;
 }
 
