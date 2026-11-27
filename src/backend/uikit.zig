@@ -97,7 +97,7 @@ fn span(v: CGFloat) u16 {
 }
 
 fn keyboardOverlap(self: objc.Object, b: CGRect) CGFloat {
-    if (keyboard_frame.size.height <= 0) return 0;
+    if (keyboard_frame.size.height <= 0 or !self.msgSend(bool, "isFirstResponder", .{})) return 0;
     const window = self.msgSend(c.id, "window", .{}) orelse return 0;
     const space = obj(window).msgSend(objc.Object, "screen", .{}).msgSend(c.id, "coordinateSpace", .{});
     const k = self.msgSend(CGRect, "convertRect:fromCoordinateSpace:", .{ keyboard_frame, space });
@@ -170,6 +170,12 @@ fn impViewDidAppear(self: c.id, _: c.SEL, animated: bool) callconv(.c) void {
 fn closeWindow(window: objc.Object) void {
     window.msgSend(void, "setHidden:", .{true});
     window.release();
+}
+
+fn impResignFirstResponder(self: c.id, _: c.SEL) callconv(.c) bool {
+    const done = obj(self).msgSendSuper(cls("UIView"), bool, "resignFirstResponder", .{});
+    obj(self).msgSend(void, "setNeedsLayout", .{});
+    return done;
 }
 
 fn impSetNeedsLayout(self: c.id, _: c.SEL) callconv(.c) void {
@@ -313,6 +319,7 @@ fn registerClasses() void {
     std.debug.assert(v.addMethod("safeAreaInsetsDidChange", impSetNeedsLayout));
     std.debug.assert(v.addMethod("zpuglKeyboard:", impKeyboard));
     std.debug.assert(v.addMethod("canBecomeFirstResponder", impYes));
+    std.debug.assert(v.addMethod("resignFirstResponder", impResignFirstResponder));
     std.debug.assert(v.addMethod("hasText", impYes));
     std.debug.assert(v.addMethod("insertText:", impInsertText));
     std.debug.assert(v.addMethod("deleteBackward", impDeleteBackward));
