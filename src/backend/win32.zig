@@ -132,6 +132,13 @@ const HTCLIENT = 1;
 const WM_TIMER = 0x0113;
 const WM_USER = 0x0400;
 const WM_GETMINMAXINFO = 0x0024;
+const WM_SIZING = 0x0214;
+const WMSZ_LEFT = 1;
+const WMSZ_TOP = 3;
+const WMSZ_TOPLEFT = 4;
+const WMSZ_TOPRIGHT = 5;
+const WMSZ_BOTTOM = 6;
+const WMSZ_BOTTOMLEFT = 7;
 const WM_IME_STARTCOMPOSITION = 0x010D;
 const WM_IME_ENDCOMPOSITION = 0x010E;
 const WM_IME_COMPOSITION = 0x010F;
@@ -1034,19 +1041,33 @@ fn wndProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.wina
             const mmi: *MINMAXINFO = @ptrFromInt(@as(usize, @bitCast(lParam)));
             const style = getWindowStyle(hwnd);
             const ex_style = getWindowExStyle(hwnd);
-            const min_sz = view.size_hints[@backingInt(root.SizeHint.min_size)];
-            var min_rc = RECT{ .left = 0, .top = 0, .right = @intCast(min_sz.width), .bottom = @intCast(min_sz.height) };
-            _ = AdjustWindowRectEx(&min_rc, style, 0, ex_style);
-            mmi.ptMinTrackSize.x = min_rc.right - min_rc.left;
-            mmi.ptMinTrackSize.y = min_rc.bottom - min_rc.top;
-            const max_sz = view.size_hints[@backingInt(root.SizeHint.max_size)];
-            if (max_sz.width > 0 and max_sz.height > 0) {
-                var max_rc = RECT{ .left = 0, .top = 0, .right = @intCast(max_sz.width), .bottom = @intCast(max_sz.height) };
-                _ = AdjustWindowRectEx(&max_rc, style, 0, ex_style);
-                mmi.ptMaxTrackSize.x = max_rc.right - max_rc.left;
-                mmi.ptMaxTrackSize.y = max_rc.bottom - max_rc.top;
+            if (common.sizeHint(view, .min_size)) |m| {
+                var rc = RECT{ .left = 0, .top = 0, .right = @intCast(m.width), .bottom = @intCast(m.height) };
+                _ = AdjustWindowRectEx(&rc, style, 0, ex_style);
+                mmi.ptMinTrackSize.x = rc.right - rc.left;
+                mmi.ptMinTrackSize.y = rc.bottom - rc.top;
+            }
+            if (common.sizeHint(view, .max_size)) |m| {
+                var rc = RECT{ .left = 0, .top = 0, .right = @intCast(m.width), .bottom = @intCast(m.height) };
+                _ = AdjustWindowRectEx(&rc, style, 0, ex_style);
+                mmi.ptMaxTrackSize.x = rc.right - rc.left;
+                mmi.ptMaxTrackSize.y = rc.bottom - rc.top;
             }
             return 0;
+        },
+        WM_SIZING => {
+            const r: *RECT = @ptrFromInt(@as(usize, @bitCast(lParam)));
+            var frame = RECT{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+            _ = AdjustWindowRectEx(&frame, getWindowStyle(hwnd), 0, getWindowExStyle(hwnd));
+            const fw = frame.right - frame.left;
+            const fh = frame.bottom - frame.top;
+            const edge = wParam;
+            const size = common.constrainSize(view, @floatFromInt(r.right - r.left - fw), @floatFromInt(r.bottom - r.top - fh), edge == WMSZ_TOP or edge == WMSZ_BOTTOM);
+            const w: LONG = @as(LONG, @intFromFloat(@round(size[0]))) + fw;
+            const h: LONG = @as(LONG, @intFromFloat(@round(size[1]))) + fh;
+            if (edge == WMSZ_LEFT or edge == WMSZ_TOPLEFT or edge == WMSZ_BOTTOMLEFT) r.left = r.right - w else r.right = r.left + w;
+            if (edge == WMSZ_TOP or edge == WMSZ_TOPLEFT or edge == WMSZ_TOPRIGHT) r.top = r.bottom - h else r.bottom = r.top + h;
+            return 1;
         },
         WM_IME_CHAR => {
             // Swallow — handled via WM_IME_COMPOSITION GCS_RESULTSTR

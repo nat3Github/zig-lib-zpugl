@@ -167,6 +167,11 @@ export fn zpugl_on_resizing(view_ptr: *anyopaque, resizing: bool) void {
     view.style.resizing = resizing;
 }
 
+export fn zpugl_on_constrain(view_ptr: *anyopaque, size: *[2]f64) void {
+    const view: *root.View = @ptrCast(@alignCast(view_ptr));
+    size.* = root.common.constrainSize(view, size[0], size[1], false);
+}
+
 export fn zpugl_on_loop_leave(view_ptr: *anyopaque) void {
     const view: *root.View = @ptrCast(@alignCast(view_ptr));
     const ev = root.Event{ .loop_leave = {} };
@@ -248,6 +253,7 @@ pub fn createView(view: *root.View) root.Status {
     if (native == 0) return .realize_failed;
     view.handle = @ptrFromInt(native);
     view.visible = view.parent != 0;
+    _ = applySizeHints(view);
     const title = view.getViewString(.window_title);
     if (title.len > 0) {
         var buf: [256]u8 = undefined;
@@ -359,14 +365,10 @@ pub fn setViewStyle(view: *root.View, flags: root.ViewStyleFlags) root.Status {
 }
 pub fn applySizeHints(view: *root.View) root.Status {
     const native = @intFromPtr(view.handle orelse return .bad_call);
-    const min = view.size_hints[@backingInt(root.SizeHint.min_size)];
-    const max = view.size_hints[@backingInt(root.SizeHint.max_size)];
-    if (min.width != 0 or min.height != 0) {
-        zpugl_mac_set_min_size(native, min.width, min.height);
-    }
-    if (max.width != 0 or max.height != 0) {
-        zpugl_mac_set_max_size(native, max.width, max.height);
-    }
+    const min = root.common.sizeHint(view, .min_size) orelse root.Area{ .width = 0, .height = 0 };
+    const max = root.common.sizeHint(view, .max_size) orelse root.Area{ .width = std.math.maxInt(root.Span), .height = std.math.maxInt(root.Span) };
+    zpugl_mac_set_min_size(native, min.width, min.height);
+    zpugl_mac_set_max_size(native, max.width, max.height);
     return .success;
 }
 pub fn setViewSize(view: *root.View, w: u32, h: u32) root.Status {

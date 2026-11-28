@@ -963,6 +963,40 @@ pub const View = struct {
 };
 
 pub const common = struct {
+    pub fn sizeHint(view: *const View, hint: SizeHint) ?Area {
+        const a = view.size_hints[@backingInt(hint)];
+        return if (a.width > 0 and a.height > 0) a else null;
+    }
+
+    fn ratio(a: ?Area) ?f64 {
+        const r = a orelse return null;
+        return @as(f64, @floatFromInt(r.width)) / @as(f64, @floatFromInt(r.height));
+    }
+
+    pub fn constrainSize(view: *const View, width: f64, height: f64, keep_height: bool) [2]f64 {
+        var w = width;
+        var h = height;
+        const fixed = ratio(sizeHint(view, .fixed_aspect));
+        const lo = fixed orelse ratio(sizeHint(view, .min_aspect));
+        const hi = fixed orelse ratio(sizeHint(view, .max_aspect));
+        if (w > 0 and h > 0) {
+            const a = w / h;
+            const target = if (lo != null and a < lo.?) lo else if (hi != null and a > hi.?) hi else null;
+            if (target) |t| {
+                if (keep_height) w = h * t else h = w / t;
+            }
+        }
+        if (sizeHint(view, .min_size)) |m| {
+            w = @max(w, @as(f64, @floatFromInt(m.width)));
+            h = @max(h, @as(f64, @floatFromInt(m.height)));
+        }
+        if (sizeHint(view, .max_size)) |m| {
+            w = @min(w, @as(f64, @floatFromInt(m.width)));
+            h = @min(h, @as(f64, @floatFromInt(m.height)));
+        }
+        return .{ w, h };
+    }
+
     fn filterMods(state: Mods, key: u32) Mods {
         var m = state;
         switch (key) {

@@ -339,6 +339,7 @@ const PWinGravity: c_long = 1 << 9;
 const StaticGravity: c_int = 10;
 const PMinSize: c_long = 1 << 4;
 const PMaxSize: c_long = 1 << 5;
+const PAspect: c_long = 1 << 7;
 
 // GLX types (also used from gl.zig)
 pub const GLXContext = *anyopaque;
@@ -1599,11 +1600,8 @@ fn onScreen(display: *Display, screen: c_int, pos: root.Point, w: c_uint, h: c_u
 }
 
 fn applyWMSizeHints(display: *Display, win: Window, view: *root.View, placed: bool) void {
-    const mins = view.size_hints[@backingInt(root.SizeHint.min_size)];
-    const maxs = view.size_hints[@backingInt(root.SizeHint.max_size)];
     const pos = view.pos_hints[@backingInt(root.PositionHint.default_position)];
     const place = placed and view.parent == 0 and pos.x != std.math.minInt(i16) and pos.y != std.math.minInt(i16);
-    if (!place and mins.width == 0 and mins.height == 0 and maxs.width == 0 and maxs.height == 0) return;
     const hints = XAllocSizeHints() orelse return;
     defer _ = XFree(hints);
     hints.flags = 0;
@@ -1613,15 +1611,25 @@ fn applyWMSizeHints(display: *Display, win: Window, view: *root.View, placed: bo
         hints.y = pos.y;
         hints.win_gravity = StaticGravity;
     }
-    if (mins.width > 0 or mins.height > 0) {
+    if (root.common.sizeHint(view, .min_size)) |m| {
         hints.flags |= PMinSize;
-        hints.min_width = mins.width;
-        hints.min_height = mins.height;
+        hints.min_width = m.width;
+        hints.min_height = m.height;
     }
-    if (maxs.width > 0 or maxs.height > 0) {
+    if (root.common.sizeHint(view, .max_size)) |m| {
         hints.flags |= PMaxSize;
-        hints.max_width = if (maxs.width == 0) 32767 else maxs.width;
-        hints.max_height = if (maxs.height == 0) 32767 else maxs.height;
+        hints.max_width = m.width;
+        hints.max_height = m.height;
+    }
+    const fixed = root.common.sizeHint(view, .fixed_aspect);
+    const lo = fixed orelse root.common.sizeHint(view, .min_aspect);
+    const hi = fixed orelse root.common.sizeHint(view, .max_aspect);
+    if (lo != null or hi != null) {
+        hints.flags |= PAspect;
+        const l = lo orelse root.Area{ .width = 1, .height = std.math.maxInt(i16) };
+        const h = hi orelse root.Area{ .width = std.math.maxInt(i16), .height = 1 };
+        hints.min_aspect = .{ .x = l.width, .y = l.height };
+        hints.max_aspect = .{ .x = h.width, .y = h.height };
     }
     XSetWMNormalHints(display, win, hints);
 }

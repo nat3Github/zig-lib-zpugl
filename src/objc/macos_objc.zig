@@ -70,6 +70,7 @@ extern fn zpugl_on_client(view_ptr: *anyopaque, data1: usize, data2: usize) void
 extern fn zpugl_on_loop_enter(view_ptr: *anyopaque) void;
 extern fn zpugl_on_loop_leave(view_ptr: *anyopaque) void;
 extern fn zpugl_on_resizing(view_ptr: *anyopaque, resizing: bool) void;
+extern fn zpugl_on_constrain(view_ptr: *anyopaque, size: *[2]f64) void;
 
 // Mirror of root.ViewStyleFlags layout (must match exactly).
 const ViewStyleFlags = packed struct(u32) {
@@ -255,6 +256,17 @@ fn impViewDidEndLiveResize(self: c.id, _: c.SEL) callconv(.c) void {
 fn impWindowWillStartLiveResize(self: c.id, _: c.SEL, _: c.id) callconv(.c) void {
     if (ivarPtr(self)) |p| zpugl_on_resizing(p, true);
     sendConfigure(self, false);
+}
+
+fn impWindowWillResize(self: c.id, _: c.SEL, sender: c.id, frame_size: NSSize) callconv(.c) NSSize {
+    const p = ivarPtr(self) orelse return frame_size;
+    const win = objFromId(sender);
+    const frame = win.msgSend(NSRect, "frame", .{});
+    const content = win.msgSend(NSRect, "contentRectForFrameRect:", .{NSRect{ .origin = frame.origin, .size = frame_size }});
+    var size: [2]f64 = .{ content.size.width, content.size.height };
+    zpugl_on_constrain(p, &size);
+    const out = win.msgSend(NSRect, "frameRectForContentRect:", .{NSRect{ .origin = content.origin, .size = .{ .width = @round(size[0]), .height = @round(size[1]) } }});
+    return out.size;
 }
 
 fn impWindowDidEndLiveResize(self: c.id, _: c.SEL, _: c.id) callconv(.c) void {
@@ -843,6 +855,7 @@ fn ensureViewClass() objc.Class {
     std.debug.assert(cls.addMethod("windowDidDeminiaturize:", impWindowStateChanged));
     std.debug.assert(cls.addMethod("windowWillStartLiveResize:", impWindowWillStartLiveResize));
     std.debug.assert(cls.addMethod("windowDidEndLiveResize:", impWindowDidEndLiveResize));
+    std.debug.assert(cls.addMethod("windowWillResize:toSize:", impWindowWillResize));
     std.debug.assert(cls.addMethod("viewWillStartLiveResize", impViewWillStartLiveResize));
     std.debug.assert(cls.addMethod("viewDidEndLiveResize", impViewDidEndLiveResize));
     std.debug.assert(cls.addMethod("zpuglOcclusionChanged:", impOcclusionChanged));
