@@ -88,6 +88,7 @@ wait_step_us: u32 = default_wait_step_us,
 repaint: ?Repaint = null,
 in_frame: bool = false,
 in_expose: bool = false,
+in_key: bool = false,
 style: zpugl.ViewStyleFlags = .{},
 occluded: bool = false,
 sim_ns: ?i128 = null,
@@ -443,6 +444,8 @@ fn onEvent(view: *zpugl.View, event: *const zpugl.Event) zpugl.Status {
             const r = self.repaint orelse return .success;
             if (self.in_frame) return .success;
             self.key_handled = false;
+            self.in_key = true;
+            defer self.in_key = false;
             r.f(r.ctx);
             return if (self.key_handled or active) .success else .failure;
         },
@@ -633,7 +636,7 @@ pub fn pollEvents(self: *Core) void {
 
 pub fn begin(self: *Core, arena: std.mem.Allocator) !void {
     self.arena = arena;
-    if (!self.in_expose and !self.headless) _ = self.world.update(0);
+    if (!self.in_expose and !self.in_key and !self.headless) _ = self.world.update(0);
     const w: u32 = if (self.headless) 0 else @intFromFloat(self.size.w);
     const h: u32 = if (self.headless) 0 else @intFromFloat(self.size.h);
     if (self.gl == .vulkan) {
