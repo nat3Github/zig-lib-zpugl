@@ -95,6 +95,7 @@ pub const Renderer = struct {
     target: ?dvui.TextureTarget = null,
     screen_w: u32 = 0,
     screen_h: u32 = 0,
+    transact: bool = false,
 
     pub fn init(_: std.mem.Allocator, view: *zpugl.View) !Renderer {
         const pool = objc_autoreleasePoolPush();
@@ -189,11 +190,17 @@ pub const Renderer = struct {
         self.buffer_used = 0;
         self.cmd = self.queue.msgSend(objc.Object, "commandBuffer", .{});
         if ((builtin.os.tag == .ios and !self.view.visible) or w == 0 or h == 0) return;
+        const transact = builtin.os.tag == .macos and self.view.getViewStyle().resizing;
+        if (transact != self.transact) self.layer.msgSend(void, "setPresentsWithTransaction:", .{transact});
+        self.transact = transact;
         const size = self.layer.msgSend(CGSize, "drawableSize", .{});
         if (size.width != @as(f64, @floatFromInt(w)) or size.height != @as(f64, @floatFromInt(h))) {
             self.layer.msgSend(void, "setDrawableSize:", .{CGSize{ .width = @floatFromInt(w), .height = @floatFromInt(h) }});
         }
-        self.drawable = obj(self.layer.msgSend(c.id, "nextDrawable", .{}) orelse return);
+        const drawable = obj(self.layer.msgSend(c.id, "nextDrawable", .{}) orelse return);
+        const texture = drawable.msgSend(objc.Object, "texture", .{});
+        std.debug.assert(texture.msgSend(NSUInteger, "width", .{}) == w and texture.msgSend(NSUInteger, "height", .{}) == h);
+        self.drawable = drawable;
         self.ensureEncoder();
     }
 
@@ -206,8 +213,13 @@ pub const Renderer = struct {
     fn finishFrame(self: *Renderer, present: bool) void {
         self.endEncoder();
         if (self.cmd) |cmd| {
-            if (present) if (self.drawable) |d| cmd.msgSend(void, "presentDrawable:", .{d});
+            const drawable = if (present) self.drawable else null;
+            if (drawable != null and !self.transact) cmd.msgSend(void, "presentDrawable:", .{drawable.?});
             cmd.msgSend(void, "commit", .{});
+            if (drawable != null and self.transact) {
+                cmd.msgSend(void, "waitUntilScheduled", .{});
+                drawable.?.msgSend(void, "present", .{});
+            }
             self.frames[self.frame].cmd = cmd.retain();
         }
         self.cmd = null;
