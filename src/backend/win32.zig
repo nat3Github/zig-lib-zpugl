@@ -290,6 +290,8 @@ pub extern "user32" fn SetWindowLongPtrW(hWnd: HWND, nIndex: c_int, dwNewLong: L
 pub extern "user32" fn GetWindowLongPtrW(hWnd: HWND, nIndex: c_int) callconv(.winapi) LONG_PTR;
 pub extern "user32" fn SetWindowTextW(hWnd: HWND, lpString: [*:0]const u16) callconv(.winapi) BOOL;
 pub extern "user32" fn SetFocus(hWnd: HWND) callconv(.winapi) HWND;
+extern "user32" fn GetActiveWindow() callconv(.winapi) HWND;
+extern "user32" fn SetActiveWindow(hWnd: HWND) callconv(.winapi) HWND;
 pub extern "user32" fn GetFocus() callconv(.winapi) HWND;
 pub extern "user32" fn SetCapture(hWnd: HWND) callconv(.winapi) HWND;
 pub extern "user32" fn ReleaseCapture() callconv(.winapi) BOOL;
@@ -530,6 +532,8 @@ fn focusTarget(view: *root.View) HWND {
 
 fn focusView(view: *root.View) void {
     const target = focusTarget(view) orelse return;
+    const top = GetAncestor(target, GA_ROOT) orelse target;
+    if (GetActiveWindow() != top) _ = SetActiveWindow(top);
     if (GetFocus() != target) _ = SetFocus(target);
 }
 
@@ -1041,12 +1045,11 @@ fn wndProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.wina
             const mmi: *MINMAXINFO = @ptrFromInt(@as(usize, @bitCast(lParam)));
             const style = getWindowStyle(hwnd);
             const ex_style = getWindowExStyle(hwnd);
-            if (common.sizeHint(view, .min_size)) |m| {
-                var rc = RECT{ .left = 0, .top = 0, .right = @intCast(m.width), .bottom = @intCast(m.height) };
-                _ = AdjustWindowRectEx(&rc, style, 0, ex_style);
-                mmi.ptMinTrackSize.x = rc.right - rc.left;
-                mmi.ptMinTrackSize.y = rc.bottom - rc.top;
-            }
+            const min = common.sizeHint(view, .min_size) orelse root.Area{ .width = 0, .height = 0 };
+            var min_rc = RECT{ .left = 0, .top = 0, .right = @intCast(min.width), .bottom = @intCast(min.height) };
+            _ = AdjustWindowRectEx(&min_rc, style, 0, ex_style);
+            mmi.ptMinTrackSize.x = min_rc.right - min_rc.left;
+            mmi.ptMinTrackSize.y = min_rc.bottom - min_rc.top;
             if (common.sizeHint(view, .max_size)) |m| {
                 var rc = RECT{ .left = 0, .top = 0, .right = @intCast(m.width), .bottom = @intCast(m.height) };
                 _ = AdjustWindowRectEx(&rc, style, 0, ex_style);
@@ -1200,6 +1203,8 @@ pub fn createView(view: *root.View) root.Status {
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
 
     const parent_hwnd: HWND = if (view.parent != 0) @ptrFromInt(view.parent) else null;
+    var frame = RECT{ .left = 0, .top = 0, .right = w, .bottom = h };
+    _ = AdjustWindowRectEx(&frame, style, 0, 0);
 
     const hwnd = CreateWindowExW(
         0,
@@ -1208,8 +1213,8 @@ pub fn createView(view: *root.View) root.Status {
         style,
         x,
         y,
-        w,
-        h,
+        frame.right - frame.left,
+        frame.bottom - frame.top,
         parent_hwnd,
         null,
         impl.hinstance,
@@ -1232,6 +1237,7 @@ pub fn createView(view: *root.View) root.Status {
 
     view.handle = hwnd;
     view.visible = view.parent != 0;
+    view.style.mapped = view.visible;
     if (view.transient_parent != 0) {
         _ = setTransientParent(view, view.transient_parent);
     }
@@ -1246,7 +1252,6 @@ fn configure(view: *root.View, width: i64, height: i64) void {
 }
 
 pub fn realized(view: *root.View) void {
-    if (view.parent == 0) return;
     var rc: RECT = undefined;
     if (GetClientRect(view.handle.?, &rc) == 0) return;
     configure(view, rc.right - rc.left, rc.bottom - rc.top);
@@ -1283,7 +1288,9 @@ pub fn showView(view: *root.View, command: root.ShowCommand) root.Status {
 
 pub fn hideView(view: *root.View) root.Status {
     const hwnd = view.handle orelse return .bad_call;
+    const focused = view.parent != 0 and hasFocus(view);
     _ = ShowWindow(hwnd, SW_HIDE);
+    if (focused) _ = SetFocus(GetParent(hwnd));
     view.visible = false;
     return .success;
 }
@@ -1356,7 +1363,8 @@ const DWMWA_CLOAKED: DWORD = 14;
 pub fn isOccluded(view: *root.View) bool {
     const own = view.handle orelse return false;
     const hwnd = GetAncestor(own, GA_ROOT) orelse own;
-    if (IsIconic(hwnd) != 0 or IsWindowVisible(hwnd) == 0) return true;
+    const visible = if (hwnd == own) view.style.mapped else IsWindowVisible(hwnd) != 0;
+    if (IsIconic(hwnd) != 0 or !visible) return true;
     var cloaked: DWORD = 0;
     return DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, @sizeOf(DWORD)) == 0 and cloaked != 0;
 }
