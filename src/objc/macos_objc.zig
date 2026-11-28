@@ -67,6 +67,9 @@ extern fn zpugl_on_timer(view_ptr: *anyopaque, id: usize) void;
 extern fn zpugl_on_data_offer(view_ptr: *anyopaque, time: f64, clipboard: u32) void;
 extern fn zpugl_on_data(view_ptr: *anyopaque, time: f64, x: f64, y: f64, clipboard: u32, type_index: u32) void;
 extern fn zpugl_on_client(view_ptr: *anyopaque, data1: usize, data2: usize) void;
+extern fn zpugl_on_loop_enter(view_ptr: *anyopaque) void;
+extern fn zpugl_on_loop_leave(view_ptr: *anyopaque) void;
+extern fn zpugl_on_resizing(view_ptr: *anyopaque, resizing: bool) void;
 
 // Mirror of root.ViewStyleFlags layout (must match exactly).
 const ViewStyleFlags = packed struct(u32) {
@@ -236,6 +239,26 @@ fn sendConfigure(self: c.id, changed_only: bool) void {
 }
 
 fn impWindowStateChanged(self: c.id, _: c.SEL, _: c.id) callconv(.c) void {
+    sendConfigure(self, false);
+}
+
+fn impViewWillStartLiveResize(self: c.id, _: c.SEL) callconv(.c) void {
+    objFromId(self).msgSendSuper(nsView(), void, "viewWillStartLiveResize", .{});
+    if (ivarPtr(self)) |p| zpugl_on_loop_enter(p);
+}
+
+fn impViewDidEndLiveResize(self: c.id, _: c.SEL) callconv(.c) void {
+    objFromId(self).msgSendSuper(nsView(), void, "viewDidEndLiveResize", .{});
+    if (ivarPtr(self)) |p| zpugl_on_loop_leave(p);
+}
+
+fn impWindowWillStartLiveResize(self: c.id, _: c.SEL, _: c.id) callconv(.c) void {
+    if (ivarPtr(self)) |p| zpugl_on_resizing(p, true);
+    sendConfigure(self, false);
+}
+
+fn impWindowDidEndLiveResize(self: c.id, _: c.SEL, _: c.id) callconv(.c) void {
+    if (ivarPtr(self)) |p| zpugl_on_resizing(p, false);
     sendConfigure(self, false);
 }
 
@@ -818,6 +841,10 @@ fn ensureViewClass() objc.Class {
     std.debug.assert(cls.addMethod("windowShouldClose:", impWindowShouldClose));
     std.debug.assert(cls.addMethod("windowDidMiniaturize:", impWindowStateChanged));
     std.debug.assert(cls.addMethod("windowDidDeminiaturize:", impWindowStateChanged));
+    std.debug.assert(cls.addMethod("windowWillStartLiveResize:", impWindowWillStartLiveResize));
+    std.debug.assert(cls.addMethod("windowDidEndLiveResize:", impWindowDidEndLiveResize));
+    std.debug.assert(cls.addMethod("viewWillStartLiveResize", impViewWillStartLiveResize));
+    std.debug.assert(cls.addMethod("viewDidEndLiveResize", impViewDidEndLiveResize));
     std.debug.assert(cls.addMethod("zpuglOcclusionChanged:", impOcclusionChanged));
     std.debug.assert(cls.addMethod("drawRect:", impDrawRect));
     std.debug.assert(cls.addMethod("setFrameSize:", impSetFrameSize));
@@ -1407,11 +1434,6 @@ export fn zpugl_mac_set_view_style(native: usize, flags: u32) void {
     defer pool.deinit();
     const win = ownWindow(native) orelse return;
     const f: ViewStyleFlags = @bitCast(flags);
-    var mask = win.msgSend(NSUInteger, "styleMask", .{});
-    if (f.resizing) mask |= NSWindowStyleMaskResizable else mask &= ~NSWindowStyleMaskResizable;
-    if ((mask & NSWindowStyleMaskFullScreen) == 0) {
-        win.msgSend(void, "setStyleMask:", .{mask});
-    }
     win.msgSend(void, "setLevel:", .{@as(NSInteger, if (f.above) NSFloatingWindowLevel else NSNormalWindowLevel)});
     if (f.hidden != win.msgSend(bool, "isMiniaturized", .{})) win.msgSend(void, if (f.hidden) "miniaturize:" else "deminiaturize:", .{@as(c.id, null)});
     const is_fs = (win.msgSend(NSUInteger, "styleMask", .{}) & NSWindowStyleMaskFullScreen) != 0;

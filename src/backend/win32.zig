@@ -101,6 +101,8 @@ const WM_SHOWWINDOW = 0x0018;
 const SIZE_MINIMIZED = 1;
 const WM_PAINT = 0x000F;
 const WM_CLOSE = 0x0010;
+const WM_ENTERSIZEMOVE = 0x0231;
+const WM_EXITSIZEMOVE = 0x0232;
 const WM_SETFOCUS = 0x0007;
 const WM_KILLFOCUS = 0x0008;
 const WM_KEYDOWN = 0x0100;
@@ -832,6 +834,14 @@ fn wndProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.wina
             configure(view, @intCast(lParam & 0xFFFF), @intCast((lParam >> 16) & 0xFFFF));
             return 0;
         },
+        WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE => {
+            view.style.resizing = msg == WM_ENTERSIZEMOVE;
+            _ = common.dispatchEvent(view, &if (view.style.resizing) root.Event{ .loop_enter = {} } else root.Event{ .loop_leave = {} });
+            var rc: RECT = undefined;
+            _ = GetClientRect(hwnd, &rc);
+            configure(view, rc.right - rc.left, rc.bottom - rc.top);
+            return 0;
+        },
         WM_SHOWWINDOW => {
             common.dispatchStyle(view, wParam != 0, view.style.hidden);
             return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -1302,21 +1312,12 @@ pub fn getScaleFactor(view: *root.View) f64 {
 
 pub fn setViewStyle(view: *root.View, flags: root.ViewStyleFlags) root.Status {
     const hwnd = view.handle orelse return .bad_call;
-    const cur_style: DWORD = getWindowStyle(hwnd);
-    const cur_ex: DWORD = getWindowExStyle(hwnd);
-    var new_style = cur_style;
-    var new_ex = cur_ex;
-    if (flags.resizing) {
-        new_style |= WS_THICKFRAME | WS_MAXIMIZEBOX;
-    } else {
-        new_style &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
-    }
+    var new_ex: DWORD = getWindowExStyle(hwnd);
     if (flags.modal) {
         new_ex |= WS_EX_DLGMODALFRAME;
     } else {
         new_ex &= ~WS_EX_DLGMODALFRAME;
     }
-    _ = SetWindowLongPtrW(hwnd, GWL_STYLE, @bitCast(@as(usize, new_style)));
     _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, @bitCast(@as(usize, new_ex)));
     const z: HWND = if (flags.above) HWND_TOPMOST else HWND_NOTOPMOST;
     _ = SetWindowPos(hwnd, z, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE);

@@ -162,6 +162,11 @@ export fn zpugl_on_loop_enter(view_ptr: *anyopaque) void {
     _ = common.dispatchEvent(view, &ev);
 }
 
+export fn zpugl_on_resizing(view_ptr: *anyopaque, resizing: bool) void {
+    const view: *root.View = @ptrCast(@alignCast(view_ptr));
+    view.style.resizing = resizing;
+}
+
 export fn zpugl_on_loop_leave(view_ptr: *anyopaque) void {
     const view: *root.View = @ptrCast(@alignCast(view_ptr));
     const ev = root.Event{ .loop_leave = {} };

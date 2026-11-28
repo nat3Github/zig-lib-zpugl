@@ -982,6 +982,7 @@ pub const common = struct {
         var flags = wanted;
         flags.mapped = current.mapped;
         flags.hidden = current.hidden;
+        flags.resizing = current.resizing;
         return flags;
     }
 
