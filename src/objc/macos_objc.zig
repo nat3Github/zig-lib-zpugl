@@ -217,7 +217,9 @@ fn impDrawRect(self: c.id, _: c.SEL, dirty: NSRect) callconv(.c) void {
 }
 
 fn impSetFrameSize(self: c.id, _: c.SEL, new_size: NSSize) callconv(.c) void {
+    const old = objFromId(self).msgSend(NSRect, "frame", .{}).size;
     objFromId(self).msgSendSuper(nsView(), void, "setFrameSize:", .{new_size});
+    if (old.width != new_size.width or old.height != new_size.height) objFromId(self).msgSend(void, "setNeedsDisplay:", .{true});
     sendConfigure(self, false);
 }
 
