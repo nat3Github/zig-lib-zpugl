@@ -723,7 +723,9 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
     switch (xev.type) {
         Expose_ev => {
             // Only dispatch on last expose in sequence (count == 0)
-            if (xev.expose.count == 0) {
+            var attrs: XWindowAttributes = undefined;
+            const viewable = XGetWindowAttributes(display, @intCast(win_id), &attrs) != 0 and attrs.map_state == IsViewable;
+            if (xev.expose.count == 0 and viewable) {
                 const ev = root.Event{ .expose = .{
                     .x = @intCast(xev.expose.x),
                     .y = @intCast(xev.expose.y),
@@ -858,7 +860,12 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
             const win_key: Window = @intCast(xev.any.window);
             const xic_opt = impl.xic_map.get(win_key);
             var n: usize = 0;
-            if (xic_opt) |xic| {
+            var plain = xev.key;
+            plain.state &= ~(ShiftMask | ControlMask);
+            var plain_buf: [8]u8 = undefined;
+            var plain_sym: KeySym = 0;
+            _ = XLookupString(&plain, &plain_buf, plain_buf.len, &plain_sym, null);
+            if (xev.type == KeyRelease) {} else if (xic_opt) |xic| {
                 var status: c_int = 0;
                 const nr = Xutf8LookupString(xic, &xev.key, &buf, @intCast(buf.len - 1), &sym, &status);
                 if (nr > 0 and (status == XLookupChars or status == XLookupBoth)) {
@@ -888,7 +895,7 @@ fn processEvent(world: *root.World, impl: *WorldImpl, xev: *XEvent) void {
                     n = out;
                 }
             }
-            const key = keysymToKey(sym);
+            const key = keysymToKey(plain_sym);
             const t: f64 = @as(f64, @floatFromInt(xev.key.time)) / 1000.0;
             const mods = stateMods(xev.key.state);
             if (xev.type == KeyPress) {
@@ -1634,6 +1641,16 @@ fn applyWMSizeHints(display: *Display, win: Window, view: *root.View, placed: bo
     XSetWMNormalHints(display, win, hints);
 }
 
+pub fn realized(view: *root.View) void {
+    const impl = getWorldImpl(view.world) orelse return;
+    var attrs: XWindowAttributes = undefined;
+    if (XGetWindowAttributes(impl.display, @intFromPtr(view.handle.?), &attrs) == 0) return;
+    const w: u16 = @intCast(@min(attrs.width, std.math.maxInt(u16)));
+    const h: u16 = @intCast(@min(attrs.height, std.math.maxInt(u16)));
+    view.size_hints[@backingInt(root.SizeHint.current_size)] = .{ .width = w, .height = h };
+    _ = common.dispatchEvent(view, &.{ .configure = .{ .x = @intCast(attrs.x), .y = @intCast(attrs.y), .width = w, .height = h, .style = view.style } });
+}
+
 pub fn destroyView(view: *root.View) void {
     const impl = getWorldImpl(view.world) orelse return;
     var i: usize = impl.timers.items.len;
@@ -1703,6 +1720,7 @@ pub fn applySizeHints(view: *root.View) root.Status {
     const impl = getWorldImpl(view.world) orelse return .bad_call;
     const win: Window = @intFromPtr(view.handle orelse return .bad_call);
     applyWMSizeHints(impl.display, win, view, false);
+    _ = XFlush(impl.display);
     return .success;
 }
 
